@@ -1,10 +1,44 @@
 # Freelancer Auto Bidder
 
-A Python 3.11+ CLI that finds relevant Freelancer.com projects, explains a **BID** or **SKIP** recommendation, and drafts a short English proposal. **Real bid submission is disabled by default.** A BID recommendation in dry-run mode does not place a bid.
+A Python 3.11+ bidding engine and CLI with a FastAPI web dashboard. It finds relevant Freelancer.com projects, explains a **BID** or **SKIP** recommendation, and drafts short English proposals. **Real bid submission is disabled by default.** A BID recommendation in dry-run mode does not place a bid.
 
 The service profile covers short-form video editing; YouTube Shorts, Instagram Reels and TikTok; motion graphics and After Effects; AI video ads and animation; product and promotional videos; Premiere Pro and DaVinci Resolve. This initial version handles active, fixed-price projects. Hourly projects are skipped.
 
-## Quick start
+## Web dashboard quick start
+
+The web application extends the existing engine and retains the CLI. It adds admin login, live API search, skill/country/currency/budget filters, proposal drafting and editing, scoring, bid history, analytics, monitoring controls and schedules. Both controls default to off; the Auto Bidder resets off at every restart, while a previously enabled monitoring preference is retained. The default bidding mode is dry-run.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[web,dev]'
+cp config/example.toml config/local.toml
+freelancer-web hash-password
+```
+
+The last command prompts privately for an admin password and prints a scrypt hash. Store that hash in your local secret configuration. For an interactive shell, surround the entire hash with single quotes so its literal `$` characters are preserved:
+
+```bash
+export FREELANCER_ADMIN_PASSWORD_HASH='<paste the generated scrypt hash here>'
+export FREELANCER_ADMIN_USERNAME=admin
+export FREELANCER_CONFIG_FILE=config/local.toml
+export FREELANCER_WEB_ALLOWED_HOSTS=localhost,127.0.0.1
+# Local HTTP only; use true when serving through HTTPS in production.
+export FREELANCER_WEB_COOKIE_SECURE=false
+export FREELANCER_DRY_RUN=true
+export FREELANCER_ENABLE_AUTO_BIDDING=false
+freelancer-web serve --host 127.0.0.1 --port 8000
+```
+
+Open `http://127.0.0.1:8000` and sign in with the password you hashed. No admin password is supplied by the repository. Add an approved `FREELANCER_OAUTH_TOKEN` through your environment or secret manager to search actual projects. Without a token, the dashboard shows that the connection is unconfigured. Set `FREELANCER_WEB_DEMO_MODE=true` explicitly for labelled synthetic jobs; demo mode never calls Freelancer or submits bids. Demo mode derives separate `.demo` database and report files, preserving real account data when the flag is changed.
+
+Set `OPENAI_API_KEY` to enable the optional AI drafting provider. Without it, the editor identifies generated text as a template draft. AI instructions and tone are saved separately from bid prices. Generated or edited drafts are saved for review; automatic runs continue to use the existing engine's deterministic proposal generator.
+
+Use the dashboard to turn monitoring on, review dry-run results and configure schedules and prices. The web Auto Bidder control cannot grant API permission or override the environment's live-submission gates. Follow [the permission verification steps](#enable-real-bidding-only-after-verification) before considering any real submission.
+
+See [web configuration and secure deployment](docs/WEB_DEPLOYMENT.md) for environment variables, HTTPS hosting, persistent data, tests and post-deployment checks. **Cloud deployment has not been performed by these instructions.**
+
+## CLI quick start
 
 ```bash
 python3 -m venv .venv
@@ -133,7 +167,7 @@ The API read and subsequent POST are separate operations. Another tool or manual
 ## Tests
 
 ```bash
-python -m pip install -e '.[dev]'
+python -m pip install -e '.[web,dev]'
 pytest -q
 ruff check .
 ```
@@ -141,6 +175,8 @@ ruff check .
 Tests use local fixtures, fake clients and mocked HTTP responses. They cover safe defaults, API behavior, country provenance, scoring, proposals, duplicate protection and submission failures without sending real bids or requiring a token. GitHub Actions runs the checks on Python 3.11–3.13. Live authentication and account-specific Freelancer permissions require separate verification; automated tests cannot establish them.
 
 Initial local validation on Python 3.12: **139 tests passed**, `ruff check .` passed, and `pip check` found no broken requirements. The end-to-end tests exercise the CLI and HTTP adapter against a mocked API, including dry-run and a single submission across repeated enabled runs. No live Freelancer API authentication or bid submission was performed.
+
+Web extension validation on Python 3.12: **340 tests passed**, including all 139 original engine tests, with the original engine source and tests unchanged. Lint, JavaScript syntax and dependency checks passed. A local Chromium smoke test exercised admin login, search, proposal generation/editing/saving, analytics, settings and dry-run controls, including 390px and 768px mobile layouts without horizontal overflow or browser JavaScript errors. External Freelancer/OpenAI calls were mocked or used the offline demo; cloud hosting was not deployed.
 
 ## Deploy on Linux with systemd
 

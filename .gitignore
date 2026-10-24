@@ -13,3 +13,4 @@ data/
 work/
 *.sqlite3*
 *.log
+config/local.toml

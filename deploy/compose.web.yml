@@ -1,0 +1,57 @@
+services:
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+    image: freelancer-auto-bidder-web:local
+    restart: unless-stopped
+    env_file:
+      - path: /etc/freelancer-web.env
+        format: raw
+    environment:
+      FREELANCER_CONFIG_FILE: /app/config/production.toml
+      FREELANCER_WEB_DATABASE: /app/data/web.sqlite3
+      FREELANCER_WEB_COOKIE_SECURE: "true"
+      FREELANCER_WEB_DEMO_MODE: "false"
+      # Uvicorn is reachable only on this private app network, through Caddy.
+      FORWARDED_ALLOW_IPS: "*"
+    volumes:
+      - bidder_data:/app/data
+      - /etc/freelancer-web.toml:/app/config/production.toml:ro
+    networks:
+      - dashboard
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      web:
+        condition: service_healthy
+    environment:
+      FREELANCER_WEB_DOMAIN: ${FREELANCER_WEB_DOMAIN:?Set your real public DNS hostname}
+      FREELANCER_WEB_UPSTREAM: web:8000
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - dashboard
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  dashboard:
+
+volumes:
+  bidder_data:
+  caddy_data:
+  caddy_config:

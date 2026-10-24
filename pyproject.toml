@@ -11,12 +11,17 @@ dependencies = ["httpx>=0.28.1,<1"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<10", "ruff>=0.11,<1"]
+web = ["fastapi>=0.115,<1", "uvicorn[standard]>=0.30,<1"]
 
 [project.scripts]
 freelancer-bidder = "freelancer_auto_bidder.cli:main"
+freelancer-web = "freelancer_auto_bidder.web.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"freelancer_auto_bidder.web" = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

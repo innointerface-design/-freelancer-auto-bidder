@@ -1,0 +1,7 @@
+# Replace the .invalid fallback with your actual DNS hostname or set this variable
+# in the Caddy service environment. This file does not deploy the application.
+{$FREELANCER_WEB_DOMAIN:bidder.example.invalid} {
+	encode zstd gzip
+	header Strict-Transport-Security "max-age=31536000"
+	reverse_proxy {$FREELANCER_WEB_UPSTREAM:127.0.0.1:8000}
+}
