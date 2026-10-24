@@ -1,0 +1,63 @@
+# Illustrative starting values only. Set your own prices and delivery period
+# before considering live bids. Amounts are in each named project currency.
+poll_interval_seconds = 300
+search_queries = [
+  "video editing",
+  "YouTube Shorts",
+  "Instagram Reels",
+  "TikTok",
+  "motion graphics",
+  "After Effects",
+  "AI video",
+  "AI animation",
+  "product video",
+  "promotional video",
+  "Premiere Pro",
+  "DaVinci Resolve",
+]
+page_size = 50
+max_pages_per_query = 2
+max_requests_per_cycle = 80
+min_request_interval_seconds = 1.0
+request_timeout_seconds = 30.0
+max_get_retries = 2
+max_project_age_hours = 24
+
+score_threshold = 70
+preferred_countries = ["US", "GB", "CA", "AU", "AE"]
+require_known_country = true
+require_verified_payment = true
+min_client_rating = 3.5
+
+bid_period_days = 5
+milestone_percentage = 100
+max_bids_per_day = 3
+database_path = "data/bidder.sqlite3"
+report_path = "data/recommendations.json"
+
+# These are independent currency rules, not exchange rates.
+# Unsupported/missing currencies are skipped rather than converted.
+[budgets.USD]
+min_budget = "50.00"
+bid_amount = "100.00"
+max_bid = "250.00"
+
+[budgets.GBP]
+min_budget = "40.00"
+bid_amount = "80.00"
+max_bid = "200.00"
+
+[budgets.CAD]
+min_budget = "70.00"
+bid_amount = "140.00"
+max_bid = "350.00"
+
+[budgets.AUD]
+min_budget = "75.00"
+bid_amount = "150.00"
+max_bid = "375.00"
+
+[budgets.AED]
+min_budget = "185.00"
+bid_amount = "370.00"
+max_bid = "925.00"

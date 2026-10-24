@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "freelancer-auto-bidder"
+version = "0.1.0"
+description = "Dry-run-first Freelancer.com project recommendations and configurable bidding"
+requires-python = ">=3.11"
+dependencies = ["httpx>=0.28.1,<1"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "ruff>=0.11,<1"]
+
+[project.scripts]
+freelancer-bidder = "freelancer_auto_bidder.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
