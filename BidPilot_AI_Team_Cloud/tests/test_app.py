@@ -461,3 +461,80 @@ def test_settings_accept_single_character_language_without_empty_profile(app_cli
     assert r.json()['user']['skills'] == 'R'
     settings['skills'] = '  '
     assert c.post('/api/settings', headers=headers, json=settings).status_code == 400
+
+
+def test_localhost_login_works_with_setup_loopback_url(app_client, monkeypatch):
+    c, _ = app_client
+    monkeypatch.setenv('PUBLIC_URL', 'http://127.0.0.1:8000')
+    r = c.post('http://localhost:8000/api/login', headers={'Origin': 'http://localhost:8000', 'Sec-Fetch-Site': 'same-origin'},
+               json={'email': 'owner@example.test', 'password': 'Test-only-owner-password-123!'})
+    assert r.status_code == 200, r.text
+    assert c.get('http://localhost:8000/api/me').status_code == 200
+    csrf = c.get('http://localhost:8000/api/csrf').json()['csrf']
+    r = c.post('http://localhost:8000/api/demo', headers={'Origin': 'http://localhost:8000', 'Sec-Fetch-Site': 'same-origin', 'X-CSRF-Token': csrf})
+    assert r.status_code == 200, r.text
+
+
+@pytest.mark.parametrize('configured,opened', [
+    ('http://localhost:8000/', 'http://127.0.0.1:8000'),
+    ('http://127.0.0.1:8000', 'http://[::1]:8000'),
+    ('http://127.0.0.1:80', 'http://localhost'),
+])
+def test_development_accepts_same_origin_loopback_aliases(app_client, monkeypatch, configured, opened):
+    c, _ = app_client
+    monkeypatch.setenv('PUBLIC_URL', configured)
+    r = c.post(opened + '/api/login', headers={'Origin': opened, 'Sec-Fetch-Site': 'same-origin'},
+               json={'email': 'owner@example.test', 'password': 'Test-only-owner-password-123!'})
+    assert r.status_code == 200, r.text
+
+
+@pytest.mark.parametrize('origin,request_url', [
+    ('http://localhost:8001', 'http://localhost:8001'),
+    ('https://localhost:8000', 'https://localhost:8000'),
+    ('http://localhost.evil.example:8000', 'http://localhost.evil.example:8000'),
+    ('http://127.1:8000', 'http://127.1:8000'),
+    ('http://0.0.0.0:8000', 'http://0.0.0.0:8000'),
+    ('http://[::ffff:127.0.0.1]:8000', 'http://[::ffff:127.0.0.1]:8000'),
+    ('http://localhost:8000', 'http://evil.example:8000'),
+    ('http://localhost:8000', 'http://127.0.0.1:8000'),
+    ('null', 'http://localhost:8000'),
+])
+def test_loopback_allowance_rejects_other_sites_ports_and_host_mismatches(app_client, monkeypatch, origin, request_url):
+    c, _ = app_client
+    monkeypatch.setenv('PUBLIC_URL', 'http://127.0.0.1:8000')
+    r = c.post(request_url + '/api/login', headers={'Origin': origin}, json={'email': 'owner@example.test', 'password': 'bad'})
+    assert r.status_code == 403
+    assert isinstance(r.json()['detail'], str)
+    assert r.headers['cache-control'] == 'no-store'
+    assert r.headers['x-frame-options'] == 'DENY'
+    assert "script-src 'self'" in r.headers['content-security-policy']
+
+
+@pytest.mark.parametrize('value', [
+    '', 'null', 'http://user:password@localhost:8000', 'http://localhost:8000/path',
+    'http://localhost:8000?q=x', 'http://localhost:8000#fragment',
+    ' http://localhost:8000', 'http://localhost:8000\n', 'http://local\thost:8000',
+    'http://localhost:8000\x7f', 'http://localhost:8000\\evil', 'http://[::1',
+    'http://localhost:99999', 'http://localhost:0', 'file://localhost',
+])
+def test_origin_parser_fails_closed_on_malformed_values(value):
+    assert main._parse_origin(value) is None
+
+
+def test_production_does_not_enable_local_alias_allowance(app_client, monkeypatch):
+    c, _ = app_client
+    monkeypatch.setattr(main, 'APP_ENV', 'production')
+    monkeypatch.setenv('PUBLIC_URL', 'http://127.0.0.1:8000')
+    r = c.post('http://localhost:8000/api/login', headers={'Origin': 'http://localhost:8000'}, json={'email': 'owner@example.test', 'password': 'bad'})
+    assert r.status_code == 403 and 'detail' in r.json()
+    assert main._origin_allowed('https://APP.EXAMPLE:443', 'https://app.example/', 'https://app.example/')
+    assert not main._origin_allowed('https://other.example', 'https://app.example', 'https://other.example/')
+
+
+def test_fetch_metadata_and_duplicate_origins_still_blocked(app_client, monkeypatch):
+    c, _ = app_client
+    monkeypatch.setenv('PUBLIC_URL', 'http://127.0.0.1:8000')
+    r = c.post('http://localhost:8000/api/login', headers={'Origin': 'http://localhost:8000', 'Sec-Fetch-Site': 'cross-site'}, json={'email': 'owner@example.test', 'password': 'bad'})
+    assert r.status_code == 403 and 'detail' in r.json()
+    r = c.post('http://localhost:8000/api/login', headers=[('Origin', 'http://localhost:8000'), ('Origin', 'http://evil.example')], json={'email': 'owner@example.test', 'password': 'bad'})
+    assert r.status_code == 403 and 'detail' in r.json()

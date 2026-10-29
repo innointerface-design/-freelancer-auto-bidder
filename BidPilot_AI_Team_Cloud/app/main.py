@@ -1,5 +1,6 @@
 import json, time, os, secrets, re, logging, hashlib, hmac, math
 from typing import Literal
+from urllib.parse import urlsplit
 from sqlalchemy import update, text
 from types import SimpleNamespace
 from sqlalchemy.exc import IntegrityError
@@ -11,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from .db import (
     SessionLocal, init_db, User, Connection, Job, Bid, ChatGreeted, PaymentRequest, Audit,
-    SESSION_SECRET, SECURE_COOKIES, PLATFORM_AUTO, ALLOW_PROD,
+    APP_ENV, SESSION_SECRET, SECURE_COOKIES, PLATFORM_AUTO, ALLOW_PROD,
     encrypt_secret, audit, public_user, hash_password, verify_password,
     AuthSession, LoginAttempt, create_auth_session, get_auth_session, revoke_auth_session, session_digest,
     plan_config, apply_plan, subscription_active
@@ -43,17 +44,55 @@ async def validation_error(request, exc):
     ]})
 
 
+def _parse_origin(value):
+    # urlsplit silently strips some controls; reject them before parsing headers.
+    if not isinstance(value, str) or not value or any(ord(c) <= 32 or ord(c) == 127 for c in value) or '\\' in value:
+        return None
+    try:
+        parsed = urlsplit(value)
+        if (parsed.scheme not in ('http', 'https') or not parsed.hostname
+                or parsed.username is not None or parsed.password is not None
+                or parsed.path not in ('', '/') or parsed.query or parsed.fragment):
+            return None
+        port = parsed.port if parsed.port is not None else (443 if parsed.scheme == 'https' else 80)
+        if not 1 <= port <= 65535:
+            return None
+        return parsed.scheme, parsed.hostname.lower(), port
+    except (ValueError, UnicodeError):
+        return None
+
+
+def _origin_allowed(origin, expected, request_base):
+    observed, configured = _parse_origin(origin), _parse_origin(expected)
+    if observed is None or configured is None:
+        return False
+    if observed == configured:
+        return True
+    if APP_ENV not in ('development', 'test'):
+        return False
+    actual = _parse_origin(request_base)
+    loopback = {'localhost', '127.0.0.1', '::1'}
+    # Browser opened via a local alias: still require a same-origin request,
+    # the configured scheme/port, and exact known loopback names. No DNS lookup.
+    return (actual is not None and observed == actual
+            and observed[1] in loopback and configured[1] in loopback
+            and observed[0] == configured[0] and observed[2] == configured[2])
+
+
 @app.middleware('http')
 async def secure_requests(request: Request, call_next):
+    denial = None
     if request.url.path.startswith('/api/') and request.method not in ('GET', 'HEAD', 'OPTIONS'):
-        origin = request.headers.get('origin', '')
-        if request.headers.get('sec-fetch-site') == 'cross-site':
-            return Response('Cross-origin request denied', status_code=403)
-        if origin:
-            expected = os.getenv('PUBLIC_URL', '').rstrip('/') or str(request.base_url).rstrip('/')
-            if origin.rstrip('/') != expected:
-                return Response('Cross-origin request denied', status_code=403)
-    response = await call_next(request)
+        origins = request.headers.getlist('origin')
+        if request.headers.get('sec-fetch-site', '').lower() == 'cross-site':
+            denial = 'This request came from another website. Open BidPilot directly and sign in again.'
+        elif len(origins) > 1:
+            denial = 'Invalid browser origin headers. Reload the app and try again.'
+        elif origins:
+            expected = os.getenv('PUBLIC_URL', '').strip() or str(request.base_url)
+            if not _origin_allowed(origins[0], expected, str(request.base_url)):
+                denial = 'This browser address does not match this app. Open the address configured for the server and try again.'
+    response = JSONResponse(status_code=403, content={'detail': denial}) if denial else await call_next(request)
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
     response.headers['X-Frame-Options'] = 'DENY'

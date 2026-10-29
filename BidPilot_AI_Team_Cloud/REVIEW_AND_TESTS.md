@@ -1,6 +1,6 @@
 # BidPilot AI — second review / updated v2
 
-Second review completed 29 October 2026. Supersedes the earlier reviewed ZIP. This release repairs the uploaded project; the accompanying pasted Gemini response was reference material, not code automatically trusted or installed. This is a tested revision, not a guarantee that every possible defect or attack has been eliminated.
+Second review and subsequent login/API-diagnostic patch completed 29 October 2026. Supersedes the earlier reviewed ZIP. This release repairs the uploaded project; the accompanying pasted Gemini response was reference material, not code automatically trusted or installed. This is a tested revision, not a guarantee that every possible defect or attack has been eliminated.
 
 ## Changes made
 
@@ -35,20 +35,28 @@ Second review completed 29 October 2026. Supersedes the earlier reviewed ZIP. Th
 
 | Check | Result |
 | --- | --- |
-| Full automated suite | **125 passed plus 12 subtests**, 21.61 seconds on the final run |
+| Full automated suite | **165 passed plus 12 subtests**, 29.47 seconds on the latest patch run |
 | External API protocol/security cases | Controlled mocks; no real credentials or bids |
 | Chromium desktop/mobile smoke | 13 flows passed (including same-browser owner→member privacy and post-approval plan refresh): owner login, demo proposal/draft, settings, billing, member creation, logout, mobile signup, unpaid local demo, $40 receipt submission, owner approval |
 | Browser errors | No JavaScript page errors, CSP violations, unexpected API failures or external requests; only expected anonymous `/api/me` 401 responses |
-| Docker build | Passed with pinned dependencies and temporary build-only proxy CA mount |
+| Docker build | Previous reviewed v2 passed with pinned dependencies and temporary build-only proxy CA mount; not repeated for this HTTP/diagnostic-only patch |
 | Actual PostgreSQL 17 + production app | Passed startup, login, Secure/HttpOnly cookies, CSRF rejection, revoked logout, registration, member/admin isolation, fixed prices and refusal of unconfigured payment methods |
 | Actual PostgreSQL concurrency/migrations | Distinct-project hourly reservation cap, one-time payment approval, renewal/anchor preservation, legacy chat-status migration and duplicate-account constraint passed |
 | Worker container | Startup passed; automatic outbound actions remained off in this deployment smoke |
 | Container health | Custom PORT=18000 healthcheck passed; database-outage health endpoint returns 503; Caddy configuration validates without issuing certificates |
-| Image isolation | UID 10001; app file hashes matched final source; no `.env` or session CA persisted |
+| Image isolation | Previous reviewed v2 image: UID 10001, source hashes matched that revision, no `.env` or session CA persisted |
 | Other checks | Compose configuration, JavaScript/Python syntax, backup shell syntax, `pip check` passed |
 | Shared-credential scan | Supplied credentials absent from release source |
 
 The suite emits one upstream TestClient deprecation warning; tests pass. Docker smoke containers/network were removed. No domain was published and no customer data was used.
+
+## Latest local-login and API-diagnostic patch
+
+The user's real browser exposed an address mismatch: setup configured PUBLIC_URL as 127.0.0.1 while instructions opened localhost. A regression reproduced the plaintext403 before the fix. The patch supports exact same-origin loopback aliases only in development/test with matching scheme/port, and keeps strict production origin rules. It rejects spoofed hostnames, userinfo, paths/query/fragment, malformed ports/controls, duplicate origins and cross-site Fetch metadata. Denials now return JSON and the normal CSP/cache/frame headers.
+
+Gemini404 saved-key diagnostics can list generation-supported models using only read-only official GET calls; up to3 bounded pages, no redirects, no automatic model change or alternative generation. OpenAI401 is reported as credential rejection. The UI distinguishes configured from verified, blocks tests of unsaved changes, escapes all model-list content, and gives manual Save→Test instructions.
+
+Current verification: 165 application tests plus12 subtests pass; 340 existing repository tests and Ruff checks pass separately. Actual Chromium checked localhost login while configured127, authenticated CSRF mutation, unsaved-test blocking and mocked Gemini404/OpenAI401 rendering. No unexpected browser errors or external requests. Deployment Docker/PostgreSQL/Caddy results above describe the prior reviewed v2 deployment, not a new production rollout. Neither the user's keys nor their machine were accessed by these tests.
 
 ## What still requires your Ubuntu/staging installation
 

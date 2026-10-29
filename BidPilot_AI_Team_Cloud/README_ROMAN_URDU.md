@@ -50,3 +50,13 @@ Auto-bidding default OFF hai. Sandbox verification ke baad `.env` mein `PLATFORM
 ## Data aur backup
 
 Passwords hashed aur API tokens encrypted hain, lekin koi app “hacker-proof” guarantee nahi de sakti. HTTPS, private secrets, updated server aur restricted backups zaroori hain. `bash deploy/backup.sh` se DB backup lein aur `.env` ka alag encrypted backup rakhein. `FERNET_KEY` kho gayi ya replace hui to puranay saved tokens decrypt nahi honge. Production se pehle restore drill aur actual payment approval flow test karein. Detailed recovery/update instructions `README.md` mein hain.
+
+## Login 403 aur AI test errors
+
+Local browser mein `http://127.0.0.1:8000` kholein. Development/test mode mein `localhost` bhi usi scheme aur port par supported hai. Production mein `PUBLIC_URL` ko actual HTTPS domain se match hona chahiye; production origin checks strict hain.
+
+Purana code login par `Server returned an unreadable response (403)` dikhaye to server Ctrl+C se band karein, repository root mein `git pull --ff-only` karein, phir app folder se server restart karein. Browser Ctrl+Shift+R se refresh karein. Private `.env`/database delete ya recreate na karein.
+
+- OpenAI **401**: provider ne credential accept nahi kiya. Provider dashboard se nayi poori **secret API key** create karke app mein save karein. Key ID, ChatGPT login password ya subscription ko API secret na samjhein. Fresh key chat mein share na karein.
+- Gemini **404**: selected model/endpoint available nahi. Updated saved-key test official API se generation-supported models ki read-only list lene ki koshish karta hai. Agar list mile to model ID copy karke Gemini Model mein set, **Save**, phir **Test saved AI keys** karein. Koi model automatically change nahi hota. Discovery fail ho to uska message dekhein; 404 se akelay key ki validity confirm nahi hoti.
+- Key/model/preference mein changes ke baad pehle **Save** zaroor karein. Test sirf saved configuration use karta hai. Configured provider label API success ka proof nahi; successful test alag status dikhata hai.

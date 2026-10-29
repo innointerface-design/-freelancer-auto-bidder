@@ -14,9 +14,9 @@ The reviewed BidPilot SaaS application is available here:
 - [Second-review fixes in Roman Urdu](BidPilot_AI_Team_Cloud/SECOND_REVIEW_CHANGES_ROMAN_URDU.md)
 - [Review and test results](BidPilot_AI_Team_Cloud/REVIEW_AND_TESTS.md)
 
-BidPilot has $10 Starter and $40 Pro plans, two free founder slots, encrypted saved API tokens, and manual payment verification. The review completed with 125 tests plus 12 subtests, Chromium desktop/mobile flows, and Docker/PostgreSQL checks. Live AI credentials, Freelancer sandbox acceptance, actual payment settlement and public HTTPS still require validation on the target server. No real credentials, customer databases or private `.env` files are included.
+BidPilot has $10 Starter and $40 Pro plans, two free founder slots, encrypted saved API tokens, and manual payment verification. The latest login/API-diagnostic patch passed 165 tests plus 12 subtests and an actual Chromium localhost login/CSRF check. Deployment verification details are recorded in the review report. Live AI credentials, Freelancer sandbox acceptance, actual payment settlement and public HTTPS still require validation on the target server. No real credentials, customer databases or private `.env` files are included.
 
-For this application, change into `BidPilot_AI_Team_Cloud` and follow its own README and Python 3.12 requirements. Its source and tests are separate from the CLI/dashboard described below. The repository adds a local `pytest.ini` for test isolation when BidPilot is nested in this repository; the downloadable ZIP retains the original reviewed application bytes. GitHub cannot preview ZIP contents: use the download link above, or choose **Download raw file** on the ZIP's GitHub page.
+For this application, change into `BidPilot_AI_Team_Cloud` and follow its own README and Python 3.12 requirements. Its source and tests are separate from the CLI/dashboard described below. The repository adds a local `pytest.ini` for test isolation when BidPilot is nested in this repository; the downloadable ZIP contains the current standalone application source. GitHub cannot preview ZIP contents: use the download link above, or choose **Download raw file** on the ZIP's GitHub page.
 
 ## Web dashboard quick start
 

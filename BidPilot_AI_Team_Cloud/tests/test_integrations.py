@@ -228,6 +228,146 @@ class ProviderTests(unittest.TestCase):
         self.assertNotIn(configuration['gemini_key'], str(result))
 
 
+class GeminiDiscoveryTests(unittest.TestCase):
+    @staticmethod
+    def model(name, methods=None):
+        return {'name': 'models/' + name, 'supportedGenerationMethods': ['generateContent'] if methods is None else methods}
+
+    def test_404_discovers_supported_models_readonly_without_changing_selected_model(self):
+        requests = []
+        def handler(request):
+            requests.append(request)
+            self.assertEqual(request.headers['x-goog-api-key'], 'test-gemini-secret')
+            self.assertNotIn('test-gemini-secret', str(request.url))
+            if request.method == 'POST':
+                return httpx.Response(404, json={'error': {'message': 'unavailable'}})
+            self.assertEqual(request.method, 'GET')
+            self.assertEqual(request.url.path, '/v1beta/models')
+            self.assertEqual(request.url.params['pageSize'], '100')
+            return httpx.Response(200, json={'models': [self.model('gemini-supported'), self.model('embedding', ['embedContent']),
+                self.model('gemini-supported'), {'name': 'models/invalid/path', 'supportedGenerationMethods': ['generateContent']},
+                {'name': 'models/missing-methods'}, None]})
+        with mock_client(handler), patch.object(ai, 'resolve_ai_credentials', return_value=credentials()), \
+             patch.dict(os.environ, {'GEMINI_AUTH_MODE': 'api_key'}):
+            result = ai.test_ai_connection(None, 'gemini')['gemini']
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['status_code'], 404)
+        self.assertEqual(result['model'], credentials()['gemini_model'])
+        self.assertEqual(result['available_models'], ['gemini-supported'])
+        self.assertTrue(result['model_discovery_complete'])
+        self.assertIn('Choose an available model', result['message'])
+        self.assertEqual([r.method for r in requests], ['POST', 'GET'])
+
+    def test_listing_uses_explicit_oauth_and_pages_without_key_in_url(self):
+        requests = []
+        def handler(request):
+            requests.append(request)
+            self.assertEqual(request.headers['Authorization'], 'Bearer dummy-oauth')
+            self.assertNotIn('x-goog-api-key', request.headers)
+            self.assertNotIn('dummy-oauth', str(request.url))
+            if len(requests) == 1:
+                return httpx.Response(200, json={'models': [self.model('first')], 'nextPageToken': 'page two&opaque'})
+            self.assertEqual(request.url.params['pageToken'], 'page two&opaque')
+            return httpx.Response(200, json={'models': [self.model('second'), self.model('first')]})
+        with mock_client(handler), patch.dict(os.environ, {'GEMINI_AUTH_MODE': 'oauth'}):
+            result = ai._discover_gemini_models('dummy-oauth')
+        self.assertEqual(result['available_models'], ['first', 'second'])
+        self.assertTrue(result['model_discovery_complete'])
+        self.assertEqual(len(requests), 2)
+
+    def test_listing_stops_after_three_pages_and_marks_partial(self):
+        requests = []
+        def handler(request):
+            requests.append(request)
+            return httpx.Response(200, json={'models': [self.model('page-' + str(len(requests)))], 'nextPageToken': str(len(requests))})
+        with mock_client(handler):
+            result = ai._discover_gemini_models('dummy-secret')
+        self.assertEqual(len(requests), 3)
+        self.assertEqual(result['available_models'], ['page-1', 'page-2', 'page-3'])
+        self.assertFalse(result['model_discovery_complete'])
+        self.assertIn('three pages', result['model_discovery_message'])
+
+    def test_later_page_failure_preserves_partial_models_and_redacts_remote_body(self):
+        requests = []
+        def handler(request):
+            requests.append(request)
+            if len(requests) == 1:
+                return httpx.Response(200, json={'models': [self.model('known-good')], 'nextPageToken': 'next'})
+            return httpx.Response(401, json={'error': {'message': 'dummy-secret credential rejected'}})
+        with mock_client(handler):
+            result = ai._discover_gemini_models('dummy-secret')
+        self.assertEqual(result['available_models'], ['known-good'])
+        self.assertFalse(result['model_discovery_complete'])
+        self.assertIn('401', result['model_discovery_message'])
+        self.assertNotIn('dummy-secret', str(result))
+        self.assertNotIn('https://', str(result))
+
+    def test_discovery_redirect_is_not_followed(self):
+        calls = []
+        def handler(request):
+            calls.append(request)
+            return httpx.Response(302, headers={'Location': 'https://evil.example/steal'})
+        with mock_client(handler):
+            result = ai._discover_gemini_models('dummy-secret')
+        self.assertEqual(len(calls), 1)
+        self.assertFalse(result['model_discovery_complete'])
+        self.assertIn('302', result['model_discovery_message'])
+        self.assertNotIn('dummy-secret', str(result))
+
+    def test_malformed_model_lists_and_page_tokens_are_safe_partial_results(self):
+        for payload in ({'models': {}}, {'models': None}, {'models': [], 'nextPageToken': {}},
+                        {'models': [], 'nextPageToken': False}, {'models': [], 'nextPageToken': 'x' * 4097}):
+            calls = []
+            def handler(request):
+                calls.append(request)
+                return httpx.Response(200, json=payload)
+            with mock_client(handler):
+                result = ai._discover_gemini_models('dummy-secret')
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(result['available_models'], [])
+            self.assertFalse(result['model_discovery_complete'])
+            self.assertIn('invalid model', result['model_discovery_message'])
+
+    def test_repeated_pagination_token_does_not_loop(self):
+        calls = []
+        def handler(request):
+            calls.append(request)
+            return httpx.Response(200, json={'models': [self.model('known-good')], 'nextPageToken': 'same'})
+        with mock_client(handler):
+            result = ai._discover_gemini_models('dummy-secret')
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(result['available_models'], ['known-good'])
+        self.assertFalse(result['model_discovery_complete'])
+        self.assertIn('repeated', result['model_discovery_message'])
+
+    def test_missing_models_can_mean_no_models_and_is_actionable(self):
+        with mock_client(lambda _: httpx.Response(200, json={})):
+            result = ai._discover_gemini_models('dummy-secret')
+        self.assertEqual(result['available_models'], [])
+        self.assertTrue(result['model_discovery_complete'])
+        self.assertIn('No generateContent models', result['model_discovery_message'])
+
+    def test_other_errors_do_not_trigger_discovery_and_openai_401_stays_explicit(self):
+        for provider in ('gemini', 'openai'):
+            calls = []
+            def handler(request):
+                calls.append(request)
+                return httpx.Response(401, json={'error': {'message': credentials()[provider + '_key']}})
+            with mock_client(handler), patch.object(ai, 'resolve_ai_credentials', return_value=credentials()):
+                result = ai.test_ai_connection(None, provider)[provider]
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(result['status_code'], 401)
+            self.assertFalse(result['ok'])
+            self.assertNotIn('available_models', result)
+            self.assertNotIn(credentials()[provider + '_key'], str(result))
+
+    def test_listing_response_size_is_bounded(self):
+        with mock_client(lambda _: httpx.Response(200, content=b' ' * 1_000_001)):
+            result = ai._discover_gemini_models('dummy-secret')
+        self.assertFalse(result['model_discovery_complete'])
+        self.assertIn('safe size limit', result['model_discovery_message'])
+
+
 class FreelancerTests(unittest.TestCase):
     def test_identity_uses_official_oauth_header_and_user_id(self):
         def handler(request):

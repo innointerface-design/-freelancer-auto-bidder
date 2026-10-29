@@ -158,9 +158,10 @@ def resolve_ai_credentials(u=None):
 class AIProviderError(Exception):
     """Safe diagnostics: messages never include API keys, URLs, prompts or remote bodies."""
 
-    def __init__(self, message, retry_after=60):
+    def __init__(self, message, retry_after=60, *, status_code=None):
         super().__init__(message)
         self.retry_after = max(30, min(int(retry_after), 900))
+        self.status_code = status_code
 
 
 def _credential(api_key):
@@ -171,10 +172,13 @@ def _credential(api_key):
     return value
 
 
-def _post_json(url, headers, payload, provider):
+def _request_json(method, url, headers, payload, provider, *, params=None, timeout=35.0):
+    arguments = {'headers': headers, 'params': params}
+    if payload is not None:
+        arguments['json'] = payload
     try:
-        with httpx.Client(timeout=httpx.Timeout(35.0, connect=8.0), follow_redirects=False) as client:
-            with client.stream('POST', url, headers=headers, json=payload) as response:
+        with httpx.Client(timeout=httpx.Timeout(timeout, connect=min(8.0, timeout)), follow_redirects=False) as client:
+            with client.stream(method, url, **arguments) as response:
                 status = response.status_code
                 if not 200 <= status < 300:
                     detail = {
@@ -184,7 +188,7 @@ def _post_json(url, headers, payload, provider):
                         404: 'Model or endpoint unavailable; select a model supported by this account',
                         429: 'Rate limit or quota reached; check billing and retry later',
                     }.get(status, 'Provider temporarily unavailable; check service status and configuration')
-                    raise AIProviderError(f'{provider} HTTP {status}: {detail}', retry_after=300 if status in (400, 401, 403, 404, 429) else 60)
+                    raise AIProviderError(f'{provider} HTTP {status}: {detail}', retry_after=300 if status in (400, 401, 403, 404, 429) else 60, status_code=status)
                 chunks, size = [], 0
                 for chunk in response.iter_bytes():
                     size += len(chunk)
@@ -205,19 +209,88 @@ def _post_json(url, headers, payload, provider):
         raise AIProviderError(f'{provider} returned invalid JSON') from None
 
 
-def _call_gemini(api_key, model, prompt, max_tokens=380):
+def _post_json(url, headers, payload, provider):
+    return _request_json('POST', url, headers, payload, provider)
+
+
+def _gemini_headers(api_key):
     key = _credential(api_key)
-    model = str(model or '').removeprefix('models/')
-    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,119}', model):
-        raise AIProviderError('Invalid Gemini model name')
-    auth_mode = os.getenv('GEMINI_AUTH_MODE', 'api_key').strip().lower()
+    mode = os.getenv('GEMINI_AUTH_MODE', 'api_key').strip().lower()
     headers = {'Content-Type': 'application/json'}
-    if auth_mode == 'oauth':
+    if mode == 'oauth':
         headers['Authorization'] = 'Bearer ' + key
-    elif auth_mode == 'api_key':
+    elif mode == 'api_key':
         headers['x-goog-api-key'] = key
     else:
         raise AIProviderError('GEMINI_AUTH_MODE must be api_key or oauth')
+    return headers
+
+
+def _discover_gemini_models(api_key):
+    """Read supported model IDs without choosing or generating with another model.
+
+    Three bounded pages at most. Later-page failures retain known available IDs
+    and explicitly mark the list incomplete. No remote message/body is reflected.
+    """
+    found, page_token, seen_tokens = [], None, set()
+    complete, message = False, ''
+    try:
+        headers = _gemini_headers(api_key)
+        for page_number in range(3):
+            params = {'pageSize': 100}
+            if page_token:
+                params['pageToken'] = page_token
+            data = _request_json(
+                'GET', 'https://generativelanguage.googleapis.com/v1beta/models',
+                headers, None, 'Gemini', params=params, timeout=10.0,
+            )
+            models = data.get('models', [])
+            if not isinstance(models, list):
+                raise AIProviderError('Gemini returned an invalid model list')
+            for item in models[:100]:
+                if not isinstance(item, dict):
+                    continue
+                methods = item.get('supportedGenerationMethods')
+                name = item.get('name')
+                if not isinstance(methods, list) or 'generateContent' not in methods or not isinstance(name, str):
+                    continue
+                if not name.startswith('models/'):
+                    continue
+                model_id = name[len('models/'):]
+                if re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,119}', model_id) and api_key not in model_id and model_id not in found:
+                    found.append(model_id)
+            if len(models) > 100:
+                message = 'The provider returned more models than requested; the list is partial.'
+                break
+            next_token = data.get('nextPageToken')
+            if next_token is None or next_token == '':
+                complete = True
+                message = ('Select one of the listed generateContent models and test again.' if found
+                           else 'No generateContent models were returned for this credential. Check Gemini API access and project permissions.')
+                break
+            if not isinstance(next_token, str) or len(next_token) > 4096 or not next_token.isascii() or any(ord(c) < 32 for c in next_token):
+                raise AIProviderError('Gemini returned an invalid model page token')
+            if next_token in seen_tokens:
+                message = 'The provider repeated a page token; the model list is partial.'
+                break
+            seen_tokens.add(next_token)
+            page_token = next_token
+        else:
+            message = 'The first three pages are shown; additional models may be available.'
+    except AIProviderError as exc:
+        message = 'Model discovery is incomplete: ' + str(exc)
+    return {
+        'available_models': found,
+        'model_discovery_complete': complete,
+        'model_discovery_message': message,
+    }
+
+
+def _call_gemini(api_key, model, prompt, max_tokens=380):
+    headers = _gemini_headers(api_key)
+    model = str(model or '').removeprefix('models/')
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,119}', model):
+        raise AIProviderError('Invalid Gemini model name')
     generation = {'maxOutputTokens': max(64, min(int(max_tokens), 4096)), 'temperature': 0.7}
     # Flash 2.5 otherwise spends tiny diagnostic output budgets on hidden thinking.
     if model.startswith('gemini-2.5-flash'):
@@ -335,7 +408,16 @@ def test_ai_connection(u, provider='both'):
             _clear_provider_failure(name, creds[name + '_key'], model)
             results[name] = {'ok': True, 'model': model, 'message': 'Provider connection successful'}
         except AIProviderError as exc:
-            results[name] = {'ok': False, 'model': model, 'message': str(exc)}
+            result = {'ok': False, 'model': model, 'message': str(exc)}
+            if exc.status_code is not None:
+                result['status_code'] = exc.status_code
+            if name == 'gemini' and exc.status_code == 404:
+                result.update(_discover_gemini_models(creds['gemini_key']))
+                result['message'] = ('Gemini HTTP 404: the selected model is unavailable for this credential or API version. '
+                                     'Choose an available model below and test again.' if result['available_models'] else
+                                     'Gemini HTTP 404: the selected model is unavailable for this credential or API version. '
+                                     'Check the model discovery details and Gemini project access.')
+            results[name] = result
         except Exception:
             results[name] = {'ok': False, 'model': model, 'message': 'Unexpected provider response; check model and server configuration'}
     return results

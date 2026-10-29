@@ -123,6 +123,7 @@ function renderStatus(){
   $('planBadgeDesc').textContent=!u.subscription_active?'Subscription inactive — demo templates available':u.auto_requested?`Auto-bid requested (${u.milestone_pct||100}% milestone)`:'Manual bidding available';
   $('autoStatus').textContent=u.auto_requested&&u.auto_admin_allowed&&S.platform_auto&&u.connected&&u.subscription_active?'Enabled (worker required)':'Paused / Manual Mode';
   if($('chatStatus'))$('chatStatus').textContent=u.auto_chat_greeting&&S.platform_auto&&u.connected&&u.subscription_active?'Enabled (worker required)':'Off';
+  if($('aiStatus').previousElementSibling)$('aiStatus').previousElementSibling.textContent='Configured AI providers';
   $('aiStatus').textContent=u.subscription_active?(S.ai_provider||'Template fallback'):'Templates (subscription inactive)';
   for(const id of ['topScan','pageScan','runAutoNow','refreshLiveBidsBtn','testAiKeysBtn','testChatBtn'])$(id).disabled=!u.subscription_active;
   $('proposalAI').textContent=u.subscription_active?'✧ AI Write Proposal (Gemini / OpenAI)':'✦ Template Proposal (demo)';
@@ -281,12 +282,14 @@ function renderSettings(){
   }
   const aiForm=$('aiKeysForm');
   if(aiForm){
+    aiForm.elements.gemini_key.placeholder='Provider-issued Gemini API key (blank keeps saved key)';
+    aiForm.elements.openai_key.placeholder='Provider-issued secret API key (blank keeps saved key)';
     aiForm.elements.preferred_ai.value=u.preferred_ai||'auto';
     aiForm.elements.gemini_model.value=u.gemini_model||'gemini-2.5-flash';
     aiForm.elements.openai_model.value=u.openai_model||'gpt-4.1-mini';
     $('geminiMaskBadge').textContent=u.has_gemini_key?`(Saved: ${u.gemini_key_masked})`:'(Not set)';
     $('openaiMaskBadge').textContent=u.has_openai_key?`(Saved: ${u.openai_key_masked})`:'(Not set)';
-    $('aiKeysBanner').innerHTML=`<b>Active AI Provider:</b> ${esc(S.ai_provider)} · Gemini Key: <b>${u.has_gemini_key?esc(u.gemini_key_masked):'Not Set'}</b> · ChatGPT Key: <b>${u.has_openai_key?esc(u.openai_key_masked):'Not Set'}</b>`;
+    $('aiKeysBanner').innerHTML=`<b>Configured AI providers (saved settings):</b> ${esc(S.ai_provider)} · Gemini Key: <b>${u.has_gemini_key?esc(u.gemini_key_masked):'Not Set'}</b> · ChatGPT Key: <b>${u.has_openai_key?esc(u.openai_key_masked):'Not Set'}</b>`;
   }
   renderStatus();
 }
@@ -379,18 +382,40 @@ if($('aiKeysForm')){
       f.elements.gemini_key.value='';f.elements.openai_key.value='';f.elements.clear_gemini.checked=false;f.elements.clear_openai.checked=false;
       S.me=x.user;S.ai_provider=x.ai_provider;
       renderSettings();
-      notify('Gemini & ChatGPT AI Keys encrypted and saved!');
+      $('aiTestResultBox').textContent='Configuration saved. Click Test saved AI keys to verify these settings.';
+      $('aiTestResultBox').classList.remove('hidden');
+      notify('AI keys encrypted and saved. Run a saved-key test to verify access.');
     }catch(ex){notify(ex.message,true)}
   };
 }
 
+function hasUnsavedAISettings(){
+  const f=$('aiKeysForm'),u=S.me||{};
+  return !!(f.elements.gemini_key.value.trim()||f.elements.openai_key.value.trim()||f.elements.clear_gemini.checked||f.elements.clear_openai.checked||
+    f.elements.gemini_model.value.trim()!==(u.gemini_model||'gemini-2.5-flash')||
+    f.elements.openai_model.value.trim()!==(u.openai_model||'gpt-4.1-mini')||
+    f.elements.preferred_ai.value!==(u.preferred_ai||'auto'));
+}
+function aiDiagnosticsHTML(g,o){
+  const models=Array.isArray(g.available_models)?g.available_models.filter(model=>typeof model==='string'):[];
+  const modelList=models.length?`<div class="mt-6"><b>Gemini models reported for this saved key:</b><ul>${models.map(model=>`<li><code>${esc(model)}</code></li>`).join('')}</ul><p>Copy a listed model ID into the Gemini Model field, click Save Gemini &amp; ChatGPT Keys, then Test saved AI keys. No model is selected or changed automatically.</p></div>`:'';
+  const discovery=g.model_discovery_message?`<div class="mt-6">${esc(g.model_discovery_message)}</div>`:'';
+  const partial=g.model_discovery_complete===false&&models.length?'<div class="mt-6">This model list may be incomplete.</div>':'';
+  const authentication=Number(o.status_code)===401?'<div class="mt-6">Authentication was rejected. Create a new secret API key in your provider dashboard, save it here, then test the saved key again. For direct OpenAI access, use <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">OpenAI API keys</a>.</div>':'';
+  return `<div><b>Google Gemini (${esc(g.model||'gemini')}):</b> <span class="tag ${g.ok?'green':'orange'}">${g.ok?'TEST PASSED ✓':'NOT VERIFIED'}</span> ${esc(g.message||'')}</div>${modelList}${discovery}${partial}<div class="mt-6"><b>OpenAI ChatGPT (${esc(o.model||'gpt')}):</b> <span class="tag ${o.ok?'green':'orange'}">${o.ok?'TEST PASSED ✓':'NOT VERIFIED'}</span> ${esc(o.message||'')}</div>${authentication}`;
+}
 if($('testAiKeysBtn')){
+  $('testAiKeysBtn').textContent='Test saved AI keys';
   $('testAiKeysBtn').onclick=async()=>{
+    if(hasUnsavedAISettings()){
+      $('aiTestResultBox').textContent='You have unsaved AI key, model, or provider changes. Click Save Gemini & ChatGPT Keys first, then Test saved AI keys. Unsaved credentials have not been tested.';
+      $('aiTestResultBox').classList.remove('hidden');
+      return;
+    }
     $('testAiKeysBtn').disabled=true;
     try{
       const x=await post('/api/ai-keys/test',{provider:'both'});
-      const g=x.results?.gemini||{},o=x.results?.openai||{};
-      $('aiTestResultBox').innerHTML=`<div><b>Google Gemini (${esc(g.model||'gemini')}):</b> <span class="tag ${g.ok?'green':'orange'}">${g.ok?'CONNECTED ✓':'NOT ACTIVE'}</span> ${esc(g.message||'')}</div><div class="mt-6"><b>OpenAI ChatGPT (${esc(o.model||'gpt')}):</b> <span class="tag ${o.ok?'green':'orange'}">${o.ok?'CONNECTED ✓':'NOT ACTIVE'}</span> ${esc(o.message||'')}</div>`;
+      $('aiTestResultBox').innerHTML=aiDiagnosticsHTML(x.results?.gemini||{},x.results?.openai||{});
       $('aiTestResultBox').classList.remove('hidden');
     }catch(ex){notify(ex.message,true)}finally{if(S.me)renderStatus()}
   };

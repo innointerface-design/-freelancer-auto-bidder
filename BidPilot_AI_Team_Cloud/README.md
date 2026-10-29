@@ -85,3 +85,9 @@ Do not replace `FERNET_KEY` to rotate API credentials: revoke/regenerate the pro
 ## Data sent to integrations
 
 Cloud AI requests include the profile text, name, skills, portfolio and the relevant project brief or chat message. Use of Gemini/OpenAI is subject to those providers’ privacy and billing settings. Application passwords, session cookies and Freelancer OAuth tokens are not included in AI prompts. Saved personal keys are encrypted; server keys remain private runtime configuration. Plain transaction references, emails and job history still require restricted database and backup access.
+
+## Login address and saved-key diagnostics patch
+
+Local development supports exact `localhost`, `127.0.0.1` and `::1` browser addresses on the configured scheme and port. This allowance requires a same-origin request and is disabled in production. Prefer `http://127.0.0.1:8000` locally; use the configured HTTPS public origin in production. Origin denials now return readable JSON with the normal security headers.
+
+AI test results refer to saved configuration. Save edits before testing; unsaved changes are explicitly blocked. A configured key is not a verified connection. OpenAI 401 requires a valid provider-issued secret credential. Gemini 404 diagnostics attempt read-only discovery of generation-supported models, with bounded pagination and explicit partial/failure reporting. Discovery never selects or generates with another model automatically. Save a supported model ID and test again. No supplied credentials were used during this patch's tests.
