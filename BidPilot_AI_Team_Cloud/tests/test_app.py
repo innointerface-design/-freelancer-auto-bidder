@@ -538,3 +538,28 @@ def test_fetch_metadata_and_duplicate_origins_still_blocked(app_client, monkeypa
     assert r.status_code == 403 and 'detail' in r.json()
     r = c.post('http://localhost:8000/api/login', headers=[('Origin', 'http://localhost:8000'), ('Origin', 'http://evil.example')], json={'email': 'owner@example.test', 'password': 'bad'})
     assert r.status_code == 403 and 'detail' in r.json()
+
+
+def test_restart_preserves_paid_member_when_optional_founder_email_conflicts(app_client, monkeypatch):
+    c, sessions = app_client
+    uid = member(sessions, email='second@example.test', plan='paid_pro', status='active')
+    with sessions() as s:
+        u = s.get(db.User, uid)
+        u.gemini_key_cipher = db.encrypt_secret('synthetic-preserved-key')
+        before = (u.password_hash, u.role, u.plan_tier, u.subscription_expires, u.gemini_key_cipher)
+        s.commit()
+    monkeypatch.setenv('SECOND_FOUNDER_EMAIL', 'second@example.test')
+    monkeypatch.setenv('SECOND_FOUNDER_PASSWORD', 'unused-other-password-123!')
+    # Re-enter the real app lifespan, reproducing the user's server restart.
+    with TestClient(main.app) as restarted:
+        assert restarted.get('/health').status_code == 200
+        headers = login(restarted)
+        assert restarted.get('/api/team').status_code == 200
+        assert restarted.post('/api/demo', headers=headers).status_code == 200
+        login(restarted, 'second@example.test', 'Customer-password-123!')
+        me = restarted.get('/api/me').json()['user']
+        assert me['role'] == 'member' and me['plan_tier'] == 'paid_pro'
+        assert me['subscription_active']
+    with sessions() as s:
+        u = s.get(db.User, uid)
+        assert (u.password_hash, u.role, u.plan_tier, u.subscription_expires, u.gemini_key_cipher) == before

@@ -1,12 +1,17 @@
-import os, json, time, hashlib, hmac, secrets, re, threading, base64, binascii
+import os, json, time, hashlib, hmac, secrets, re, threading, base64, binascii, logging
 from contextlib import contextmanager
 from urllib.parse import urlparse
-from sqlalchemy import create_engine, Column, Integer, Float, String, Boolean, Text, ForeignKey, UniqueConstraint, event, text, inspect
+from sqlalchemy import create_engine, Column, Integer, Float, String, Boolean, Text, ForeignKey, UniqueConstraint, event, text, inspect, update
 from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.exc import IntegrityError
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
 
-load_dotenv(interpolate=False)
+# Test processes provide isolated credentials explicitly. Loading a developer's
+# .env here could reintroduce real provider keys or an overriding password_B64.
+if os.getenv('APP_ENV', '').strip().lower() != 'test':
+    load_dotenv(interpolate=False)
+log = logging.getLogger('bidpilot.db')
 BASE = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 DB = os.getenv('DATABASE_URL', f'sqlite:///{BASE}/bidpilot_local.db')
 # SQLAlchemy 2.1 defaults bare PostgreSQL URLs to psycopg3; this release ships psycopg2.
@@ -412,7 +417,7 @@ def _auto_migrate_sqlite():
 
 
 def _valid_email(value):
-    return bool(re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', value))
+    return isinstance(value, str) and len(value) <= 240 and bool(re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', value))
 
 
 _init_thread_lock = threading.RLock()
@@ -489,15 +494,71 @@ def _bootstrap_password(variable):
         raise RuntimeError(f'{encoded_variable} must be valid base64-encoded UTF-8') from None
 
 
+def _optional_founder_warning():
+    # Configuration values can include personal data or credentials. Keep this
+    # message generic and never log the conflicting address or password.
+    log.warning('Optional founder provisioning skipped. Manage founder accounts through Admin; existing accounts were preserved.')
+
+
+def _provision_optional_founder(s, owner_email):
+    second_email = os.getenv('SECOND_FOUNDER_EMAIL', '').strip().lower()
+    if not second_email:
+        return
+    if not _valid_email(second_email) or second_email == owner_email:
+        _optional_founder_warning()
+        return
+    existing = s.query(User).filter_by(email=second_email).first()
+    if existing:
+        # Setup variables are a create-once hint, never an authority to change
+        # an existing customer's role, plan, credentials or subscription.
+        if existing.plan_tier != 'free_team':
+            _optional_founder_warning()
+        return
+    owner = s.query(User).filter_by(role='admin').first()
+    if not owner:
+        _optional_founder_warning()
+        return
+    # The Admin API uses this same owner-row update when assigning free seats.
+    # Share its transaction lock before counting, including on PostgreSQL where
+    # the global bootstrap advisory lock does not cover normal API requests.
+    s.execute(update(User).where(User.id == owner.id).values(lock_version=User.lock_version + 1),
+              execution_options={'synchronize_session': False})
+    if s.query(User).filter_by(plan_tier='free_team').count() >= 2:
+        _optional_founder_warning()
+        return
+    try:
+        second_password = _bootstrap_password('SECOND_FOUNDER_PASSWORD')
+        if not 12 <= len(second_password) <= 256 or second_password.startswith('SET_'):
+            _optional_founder_warning()
+            return
+        founder_hash = hash_password(second_password)
+    except (RuntimeError, ValueError, UnicodeError):
+        _optional_founder_warning()
+        return
+    try:
+        # A simultaneous signup may claim this email after the existence check.
+        # Isolate an optional insert conflict so an otherwise valid owner can
+        # still commit and the web/worker startup can complete safely.
+        with s.begin_nested():
+            founder = User(email=second_email, name='Co-founder',
+                           password_hash=founder_hash, role='member',
+                           auto_requested=False, auto_admin_allowed=True)
+            apply_plan(founder, 'free_team')
+            s.add(founder)
+            s.flush()
+    except IntegrityError:
+        _optional_founder_warning()
+
+
 def _initialize_database():
     Base.metadata.create_all(engine)
     _auto_migrate_sqlite()
     email = os.getenv('ADMIN_EMAIL', '').strip().lower()
-    password = _bootstrap_password('ADMIN_PASSWORD')
-    second_email = os.getenv('SECOND_FOUNDER_EMAIL', '').strip().lower()
-    second_password = _bootstrap_password('SECOND_FOUNDER_PASSWORD')
     with SessionLocal() as s:
         if not s.query(User).filter_by(role='admin').first():
+            # Mandatory owner bootstrap remains fail-closed. Obsolete bootstrap
+            # secrets are not parsed after an owner has already been created.
+            password = _bootstrap_password('ADMIN_PASSWORD')
             if not _valid_email(email) or not 12 <= len(password) <= 256 or password.startswith('SET_'):
                 raise RuntimeError('Set ADMIN_EMAIL and a unique ADMIN_PASSWORD (12-256 chars)')
             if s.query(User).filter_by(email=email).first():
@@ -510,22 +571,7 @@ def _initialize_database():
             apply_plan(owner, 'free_team')
             s.add(owner)
             s.flush()
-        if second_email:
-            if not _valid_email(second_email) or second_email == email:
-                raise RuntimeError('SECOND_FOUNDER_EMAIL must be a distinct valid email')
-            existing = s.query(User).filter_by(email=second_email).first()
-            if existing and existing.plan_tier != 'free_team':
-                raise RuntimeError('Second founder email already belongs to a paid member; configure through Admin')
-            if not existing:
-                if not 12 <= len(second_password) <= 256 or second_password.startswith('SET_'):
-                    raise RuntimeError('Set a unique SECOND_FOUNDER_PASSWORD (12-256 chars)')
-                if s.query(User).filter_by(plan_tier='free_team').count() >= 2:
-                    raise RuntimeError('Two free founder seats are already provisioned')
-                founder = User(email=second_email, name='Co-founder',
-                               password_hash=hash_password(second_password), role='member',
-                               auto_requested=False, auto_admin_allowed=True)
-                apply_plan(founder, 'free_team')
-                s.add(founder)
+        _provision_optional_founder(s, email)
         s.commit()
 
 

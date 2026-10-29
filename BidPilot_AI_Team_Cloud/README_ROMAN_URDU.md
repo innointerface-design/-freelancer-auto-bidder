@@ -60,3 +60,9 @@ Purana code login par `Server returned an unreadable response (403)` dikhaye to 
 - OpenAI **401**: provider ne credential accept nahi kiya. Provider dashboard se nayi poori **secret API key** create karke app mein save karein. Key ID, ChatGPT login password ya subscription ko API secret na samjhein. Fresh key chat mein share na karein.
 - Gemini **404**: selected model/endpoint available nahi. Updated saved-key test official API se generation-supported models ki read-only list lene ki koshish karta hai. Agar list mile to model ID copy karke Gemini Model mein set, **Save**, phir **Test saved AI keys** karein. Koi model automatically change nahi hota. Discovery fail ho to uska message dekhein; 404 se akelay key ki validity confirm nahi hoti.
 - Key/model/preference mein changes ke baad pehle **Save** zaroor karein. Test sirf saved configuration use karta hai. Configured provider label API success ka proof nahi; successful test alag status dikhata hai.
+
+## Second founder email wala startup error
+
+`Second founder email already belongs to a paid member` par app band hone ka bug fixed hai. Existing paid member ko automatically free/admin banaye baghair startup ab continue hoti hai; generic optional-founder warning aa sakti hai. Free founder plan assign karna ho to admin login ke baad Team & SaaS Admin se karein, jab free slot available ho.
+
+Apni existing .env aur database preserve karein. Repository update aur server restart kafi hai; setup dobara chalane, database delete karne ya encryption key badalne ki zaroorat nahi.

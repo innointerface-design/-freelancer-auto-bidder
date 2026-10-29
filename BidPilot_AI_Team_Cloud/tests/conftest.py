@@ -13,5 +13,5 @@ os.environ['SECURE_COOKIES'] = 'false'
 os.environ['PLATFORM_AUTOBID_APPROVED'] = 'true'
 os.environ['ALLOW_PRODUCTION_CONNECTION'] = 'true'
 os.environ['PUBLIC_URL'] = 'http://testserver'
-for name in ('GEMINI_API_KEY', 'OPENAI_API_KEY', 'SECOND_FOUNDER_EMAIL', 'SECOND_FOUNDER_PASSWORD'):
+for name in ('GEMINI_API_KEY', 'OPENAI_API_KEY', 'SECOND_FOUNDER_EMAIL', 'SECOND_FOUNDER_PASSWORD', 'ADMIN_PASSWORD_B64', 'SECOND_FOUNDER_PASSWORD_B64'):
     os.environ.pop(name, None)

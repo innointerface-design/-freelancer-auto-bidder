@@ -91,3 +91,9 @@ Cloud AI requests include the profile text, name, skills, portfolio and the rele
 Local development supports exact `localhost`, `127.0.0.1` and `::1` browser addresses on the configured scheme and port. This allowance requires a same-origin request and is disabled in production. Prefer `http://127.0.0.1:8000` locally; use the configured HTTPS public origin in production. Origin denials now return readable JSON with the normal security headers.
 
 AI test results refer to saved configuration. Save edits before testing; unsaved changes are explicitly blocked. A configured key is not a verified connection. OpenAI 401 requires a valid provider-issued secret credential. Gemini 404 diagnostics attempt read-only discovery of generation-supported models, with bounded pagination and explicit partial/failure reporting. Discovery never selects or generates with another model automatically. Save a supported model ID and test again. No supplied credentials were used during this patch's tests.
+
+## Optional founder conflicts during restart
+
+Bootstrap settings create accounts, not reset or promotion rules. If SECOND_FOUNDER_EMAIL already belongs to an existing paid member, startup preserves that member's credentials, tokens, role, plan and expiry and logs a generic warning. It no longer aborts the web server or worker. Assign founder access explicitly through the authenticated Admin screen if a free seat is available. Invalid optional founder settings and full founder slots also skip provisioning; the first mandatory administrator still requires valid bootstrap configuration. Existing administrators do not require old bootstrap passwords to be parsed again.
+
+Keep your current database and matching private .env. No reset or deletion is required for this fix. Explicit APP_ENV=test ignores local dotenv files so test fixtures do not import real bootstrap/API credentials.

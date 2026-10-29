@@ -18,6 +18,8 @@ def isolated_db(tmp_path, monkeypatch):
     monkeypatch.setattr(db, 'SessionLocal', factory)
     monkeypatch.setenv('ADMIN_EMAIL', 'owner@example.test')
     monkeypatch.setenv('ADMIN_PASSWORD', 'owner-unique-passphrase-123')
+    monkeypatch.delenv('ADMIN_PASSWORD_B64', raising=False)
+    monkeypatch.delenv('SECOND_FOUNDER_PASSWORD_B64', raising=False)
     monkeypatch.delenv('SECOND_FOUNDER_EMAIL', raising=False)
     monkeypatch.delenv('SECOND_FOUNDER_PASSWORD', raising=False)
     yield factory
@@ -71,8 +73,8 @@ def test_founder_config_cannot_take_over_an_existing_paid_member(isolated_db, mo
         s.commit()
     monkeypatch.setenv('SECOND_FOUNDER_EMAIL', 'claimed@example.test')
     monkeypatch.setenv('SECOND_FOUNDER_PASSWORD', 'new-password-never-used')
-    with pytest.raises(RuntimeError, match='already belongs to a paid member'):
-        db.init_db()
+    db.init_db()
+    db.init_db()
     with isolated_db() as s:
         customer = s.query(db.User).filter_by(email='claimed@example.test').one()
         assert customer.role == 'member' and customer.plan_tier != 'free_team'
@@ -326,3 +328,225 @@ def test_chat_reservation_status_migration_preserves_legacy_unknown(isolated_db)
         s.add(reservation)
         s.commit()
         assert reservation.status == 'sending'
+
+
+def test_founder_changed_to_paid_survives_restarts_without_overwriting_account(isolated_db, monkeypatch, caplog):
+    monkeypatch.setenv('SECOND_FOUNDER_EMAIL', 'former-founder@example.test')
+    monkeypatch.setenv('SECOND_FOUNDER_PASSWORD', 'original-founder-passphrase')
+    db.init_db()
+    with isolated_db() as s:
+        founder = s.query(db.User).filter_by(email='former-founder@example.test').one()
+        db.apply_plan(founder, 'paid_starter', 'active')
+        founder.password_hash = db.hash_password('user-updated-private-password')
+        founder.gemini_key_cipher = db.encrypt_secret('test-user-gemini-token')
+        founder.openai_key_cipher = db.encrypt_secret('test-user-openai-token')
+        s.add(db.Connection(user_id=founder.id, token_cipher=db.encrypt_secret('test-user-freelancer-token'),
+                            freelancer_id='5555', environment='sandbox'))
+        s.commit()
+        before = {column.name: getattr(founder, column.name) for column in db.User.__table__.columns}
+        connection_before = s.query(db.Connection).filter_by(user_id=founder.id).one().token_cipher
+    # These are obsolete setup values, not password-reset instructions.
+    monkeypatch.setenv('ADMIN_PASSWORD_B64', 'obsolete-admin-invalid-base64')
+    monkeypatch.setenv('SECOND_FOUNDER_PASSWORD_B64', 'obsolete-founder-invalid-base64')
+    db.init_db()
+    db.init_db()
+    with isolated_db() as s:
+        founder = s.query(db.User).filter_by(email='former-founder@example.test').one()
+        assert {column.name: getattr(founder, column.name) for column in db.User.__table__.columns} == before
+        assert s.query(db.Connection).filter_by(user_id=founder.id).one().token_cipher == connection_before
+        assert db.verify_password('user-updated-private-password', founder.password_hash)
+        assert not db.verify_password('original-founder-passphrase', founder.password_hash)
+    assert 'Optional founder provisioning skipped' in caplog.text
+    for private_value in ('former-founder@example.test', 'obsolete-admin-invalid-base64',
+                          'obsolete-founder-invalid-base64', 'user-updated-private-password'):
+        assert private_value not in caplog.text
+
+
+def test_existing_paid_founder_conflict_keeps_owner_login_and_health_available(isolated_db, monkeypatch):
+    from fastapi.testclient import TestClient
+    from app import main
+    db.init_db()
+    with isolated_db() as s:
+        customer = db.User(email='paid-owner-conflict@example.test', name='Customer',
+                           password_hash=db.hash_password('original-customer-password'))
+        db.apply_plan(customer, 'paid_pro', 'active')
+        s.add(customer)
+        s.commit()
+        original_hash = customer.password_hash
+        original_expiry = customer.subscription_expires
+    monkeypatch.setenv('SECOND_FOUNDER_EMAIL', 'paid-owner-conflict@example.test')
+    monkeypatch.setenv('SECOND_FOUNDER_PASSWORD_B64', 'unused-invalid-base64')
+    monkeypatch.setattr(main, 'SessionLocal', isolated_db)
+    for _ in range(2):
+        with TestClient(main.app) as client:
+            assert client.get('/health').status_code == 200
+            response = client.post('/api/login', json={'email': 'owner@example.test', 'password': 'owner-unique-passphrase-123'})
+            assert response.status_code == 200, response.text
+            assert client.get('/api/me').json()['user']['role'] == 'admin'
+    with isolated_db() as s:
+        customer = s.query(db.User).filter_by(email='paid-owner-conflict@example.test').one()
+        assert customer.password_hash == original_hash
+        assert customer.plan_tier == 'paid_pro' and customer.role == 'member'
+        assert customer.subscription_status == 'active' and customer.subscription_expires == original_expiry
+
+
+def test_optional_founder_configuration_with_full_seats_does_not_block_startup(isolated_db, monkeypatch, caplog):
+    monkeypatch.setenv('SECOND_FOUNDER_EMAIL', 'second@example.test')
+    monkeypatch.setenv('SECOND_FOUNDER_PASSWORD', 'second-founder-private-password')
+    db.init_db()
+    monkeypatch.setenv('SECOND_FOUNDER_EMAIL', 'third@example.test')
+    monkeypatch.setenv('SECOND_FOUNDER_PASSWORD_B64', 'unused-invalid-base64')
+    db.init_db()
+    db.init_db()
+    with isolated_db() as s:
+        assert s.query(db.User).filter_by(plan_tier='free_team').count() == 2
+        assert s.query(db.User).filter_by(email='third@example.test').count() == 0
+    assert 'Optional founder provisioning skipped' in caplog.text
+    assert 'third@example.test' not in caplog.text
+
+
+@pytest.mark.parametrize('optional_email,password,encoded', [
+    ('invalid-email', 'valid-optional-password-123', None),
+    ('owner@example.test', 'valid-optional-password-123', None),
+    ('x' * 240 + '@example.test', 'valid-optional-password-123', None),
+    ('optional@example.test', 'short', None),
+    ('optional@example.test', 'valid-optional-password-123', 'invalid-private-base64'),
+])
+def test_invalid_optional_founder_config_does_not_roll_back_new_owner(isolated_db, monkeypatch, caplog, optional_email, password, encoded):
+    monkeypatch.setenv('SECOND_FOUNDER_EMAIL', optional_email)
+    monkeypatch.setenv('SECOND_FOUNDER_PASSWORD', password)
+    if encoded is not None:
+        monkeypatch.setenv('SECOND_FOUNDER_PASSWORD_B64', encoded)
+    db.init_db()
+    with isolated_db() as s:
+        assert s.query(db.User).filter_by(role='admin').count() == 1
+        assert s.query(db.User).count() == 1
+    assert 'Optional founder provisioning skipped' in caplog.text
+    assert 'invalid-private-base64' not in caplog.text
+
+
+def test_unused_bootstrap_passwords_are_not_parsed_after_owner_exists(isolated_db, monkeypatch):
+    db.init_db()
+    with isolated_db() as s:
+        owner_before = s.query(db.User).filter_by(role='admin').one().password_hash
+    monkeypatch.setenv('ADMIN_PASSWORD_B64', 'obsolete-invalid-base64')
+    monkeypatch.setenv('SECOND_FOUNDER_PASSWORD_B64', 'unused-invalid-base64')
+    db.init_db()
+    db.init_db()
+    with isolated_db() as s:
+        owner = s.query(db.User).filter_by(role='admin').one()
+        assert owner.password_hash == owner_before
+        assert db.verify_password('owner-unique-passphrase-123', owner.password_hash)
+
+
+def test_required_owner_password_remains_fail_closed_when_not_created(isolated_db, monkeypatch):
+    monkeypatch.setenv('ADMIN_PASSWORD_B64', 'invalid-owner-private-base64')
+    with pytest.raises(RuntimeError, match='ADMIN_PASSWORD_B64') as error:
+        db.init_db()
+    assert 'invalid-owner-private-base64' not in str(error.value)
+    with isolated_db() as s:
+        assert s.query(db.User).count() == 0
+
+
+def test_optional_founder_and_admin_allocation_share_two_seat_limit(isolated_db, monkeypatch):
+    import threading
+    from sqlalchemy import event, update
+    db.init_db()
+    monkeypatch.setenv('SECOND_FOUNDER_EMAIL', 'optional-racing-founder@example.test')
+    monkeypatch.setenv('SECOND_FOUNDER_PASSWORD', 'optional-race-private-password')
+    with isolated_db() as s:
+        owner_id = s.query(db.User).filter_by(role='admin').one().id
+    admin_reserved = threading.Event()
+    helper_deciding = threading.Event()
+    errors = []
+
+    def before_sql(connection, cursor, statement, parameters, context, executemany):
+        if threading.current_thread().name == 'optional-founder-thread' and statement.startswith('UPDATE users SET lock_version'):
+            helper_deciding.set()
+
+    def after_sql(connection, cursor, statement, parameters, context, executemany):
+        # Without the shared row lock this count sees only one free account,
+        # allowing a third account after the administrator commits its seat.
+        if threading.current_thread().name == 'optional-founder-thread' and 'count(*)' in statement and 'users.plan_tier' in statement:
+            helper_deciding.set()
+
+    def admin_allocate():
+        try:
+            with isolated_db() as s:
+                s.execute(update(db.User).where(db.User.id == owner_id).values(lock_version=db.User.lock_version + 1))
+                member = db.User(email='admin-racing-founder@example.test', name='Admin-assigned founder',
+                                 password_hash=db.hash_password('admin-race-private-password'))
+                db.apply_plan(member, 'free_team')
+                s.add(member)
+                s.flush()
+                admin_reserved.set()
+                assert helper_deciding.wait(10), 'Optional startup did not attempt its seat decision'
+                s.commit()
+        except Exception as error:
+            errors.append(error)
+            admin_reserved.set()
+
+    def optional_allocate():
+        try:
+            assert admin_reserved.wait(10)
+            with isolated_db() as s:
+                db._provision_optional_founder(s, 'owner@example.test')
+                s.commit()
+        except Exception as error:
+            errors.append(error)
+            helper_deciding.set()
+
+    event.listen(db.engine, 'before_cursor_execute', before_sql)
+    event.listen(db.engine, 'after_cursor_execute', after_sql)
+    try:
+        threads = [threading.Thread(target=admin_allocate, name='admin-founder-thread'),
+                   threading.Thread(target=optional_allocate, name='optional-founder-thread')]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=15)
+        assert all(not thread.is_alive() for thread in threads)
+        assert not errors
+        with isolated_db() as s:
+            assert s.query(db.User).filter_by(plan_tier='free_team').count() == 2
+            assert s.query(db.User).filter_by(email='admin-racing-founder@example.test').count() == 1
+            assert s.query(db.User).filter_by(email='optional-racing-founder@example.test').count() == 0
+    finally:
+        event.remove(db.engine, 'before_cursor_execute', before_sql)
+        event.remove(db.engine, 'after_cursor_execute', after_sql)
+
+
+def test_explicit_test_mode_never_imports_neighboring_dotenv_credentials(tmp_path):
+    import base64
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    # Copy only the module into a sandbox directory so default dotenv discovery
+    # would find this synthetic .env rather than any operator configuration.
+    module_path = tmp_path / 'isolated_db_module.py'
+    module_path.write_bytes(Path(db.__file__).read_bytes())
+    (tmp_path / '.env').write_text(
+        'GEMINI_API_KEY=synthetic-private-gemini-token\n'
+        'OPENAI_API_KEY=synthetic-private-openai-token\n'
+        'ADMIN_PASSWORD_B64=' + base64.b64encode(b'synthetic-private-owner-password').decode('ascii') + '\n',
+        encoding='utf-8')
+    environment = os.environ.copy()
+    environment['APP_ENV'] = 'test'
+    environment['DATABASE_URL'] = f'sqlite:///{tmp_path}/isolated.db'
+    environment['ADMIN_PASSWORD'] = 'explicit-isolated-test-password'
+    for variable in ('GEMINI_API_KEY', 'OPENAI_API_KEY', 'ADMIN_PASSWORD_B64'):
+        environment.pop(variable, None)
+    code = '''
+import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location('isolated_database', sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+for variable in ('GEMINI_API_KEY', 'OPENAI_API_KEY', 'ADMIN_PASSWORD_B64'):
+    assert variable not in os.environ, variable
+assert module._bootstrap_password('ADMIN_PASSWORD') == 'explicit-isolated-test-password'
+'''
+    result = subprocess.run([sys.executable, '-c', code, str(module_path)], cwd=str(tmp_path),
+                            env=environment, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
