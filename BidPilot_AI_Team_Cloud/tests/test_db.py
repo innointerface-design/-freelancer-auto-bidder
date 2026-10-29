@@ -52,6 +52,35 @@ def test_secret_encryption_is_nondeterministic_and_fails_closed():
     assert db.decrypt_secret('plaintext-from-an-old-db') == ''
 
 
+def test_current_gemini_default_preserves_saved_model_and_server_override(isolated_db, monkeypatch):
+    from app.integrations import resolve_ai_credentials
+
+    monkeypatch.setenv('GEMINI_MODEL', 'gemini-operator-selected')
+    monkeypatch.setenv('GEMINI_API_KEY', 'synthetic-server-key')
+    db.init_db()
+    with isolated_db() as s:
+        owner = s.query(db.User).filter_by(email='owner@example.test').one()
+        assert owner.gemini_model == 'gemini-3.5-flash-lite'
+        owner.gemini_model = 'gemini-2.5-flash-lite'
+        owner.gemini_key_cipher = db.encrypt_secret('synthetic-personal-key')
+        s.commit()
+        ciphertext = owner.gemini_key_cipher
+
+    db.init_db()
+    db.init_db()
+    with isolated_db() as s:
+        owner = s.query(db.User).filter_by(email='owner@example.test').one()
+        assert owner.gemini_model == 'gemini-2.5-flash-lite'
+        assert owner.gemini_key_cipher == ciphertext
+        own = resolve_ai_credentials(owner)
+        assert own['gemini_key'] == 'synthetic-personal-key'
+        assert own['gemini_model'] == 'gemini-2.5-flash-lite'
+        owner.gemini_key_cipher = ''
+        shared = resolve_ai_credentials(owner)
+        assert shared['gemini_key'] == 'synthetic-server-key'
+        assert shared['gemini_model'] == 'gemini-operator-selected'
+
+
 def test_free_founders_are_provisioned_once_and_only_owner_is_admin(isolated_db, monkeypatch):
     monkeypatch.setenv('SECOND_FOUNDER_EMAIL', 'founder@example.test')
     monkeypatch.setenv('SECOND_FOUNDER_PASSWORD', 'founder-unique-passphrase-123')

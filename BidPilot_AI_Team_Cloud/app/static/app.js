@@ -1,5 +1,5 @@
 'use strict';
-const $=id=>document.getElementById(id),S={me:null,csrf:'',jobs:[],selected:null,nav:'overview',intent:null,team:[],seen:null,alerts:false,ai_provider:'',payment_methods:{},registering:false,epoch:0,refreshRevision:0,proposalRevision:0,editorRevision:0,bidBusy:false,authBusy:false};
+const $=id=>document.getElementById(id),S={me:null,csrf:'',jobs:[],selected:null,nav:'overview',intent:null,team:[],seen:null,alerts:false,ai_provider:'',payment_methods:{},registering:false,epoch:0,refreshRevision:0,proposalRevision:0,editorRevision:0,bidBusy:false,authBusy:false,aiBusy:'',aiRevision:0};
 const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const usd=j=>{const c=j.currency||'Currency unknown',a=j.budget_min,b=j.budget_max;return a==null&&b==null?`${c} · Budget flexible`:`${c} ${a??'?'}${b!=null?'–'+b:''}${j.type?.includes('hour')?'/hr':''}`};
 const age=t=>{if(!t)return 'Not scanned yet';return new Date(Number(t)*1000).toLocaleString()};
@@ -19,8 +19,8 @@ function setAuthMode(registering){
   $('loginMsg').textContent='';
 }
 function resetSession(){
-  S.epoch++;S.refreshRevision++;S.proposalRevision++;S.editorRevision++;
-  Object.assign(S,{me:null,csrf:'',jobs:[],selected:null,nav:'overview',intent:null,team:[],seen:null,alerts:false,ai_provider:'',payment_methods:{},bidBusy:false,authBusy:false});
+  S.epoch++;S.refreshRevision++;S.proposalRevision++;S.editorRevision++;S.aiRevision++;
+  Object.assign(S,{me:null,csrf:'',jobs:[],selected:null,nav:'overview',intent:null,team:[],seen:null,alerts:false,ai_provider:'',payment_methods:{},bidBusy:false,authBusy:false,aiBusy:''});
   document.querySelectorAll('form').forEach(form=>form.reset());
   for(const id of ['teamList','adminPaymentsList','teamOverview','billingSummaryBox','topJobs','jobsTable','proposalsBody','liveBidsBody','activityBody','myPlanBanner','myPaymentsList','paymentMethodsBox','aiKeysBanner','aiTestResultBox','testChatBox','aiReviewBox','connectionBanner','autoStatus','chatStatus','aiStatus','modalNotice','modalTitle','modalDesc','modalMeta','modalTrust','modalReasons','confirmText','confirmProposal','accountName','accountEmail','greeting','avatar','planStatus','connStatus','lastScan','planBadgeTitle','planBadgeDesc','geminiMaskBadge','openaiMaskBadge'])$(id).textContent='';
   for(const id of ['bidProposal','bidAmount','bidDays','bidMilestone','loginEmail','loginPassword','registerName','connectToken','confirmation','jobSearch'])$(id).value='';
@@ -125,7 +125,8 @@ function renderStatus(){
   if($('chatStatus'))$('chatStatus').textContent=u.auto_chat_greeting&&S.platform_auto&&u.connected&&u.subscription_active?'Enabled (worker required)':'Off';
   if($('aiStatus').previousElementSibling)$('aiStatus').previousElementSibling.textContent='Configured AI providers';
   $('aiStatus').textContent=u.subscription_active?(S.ai_provider||'Template fallback'):'Templates (subscription inactive)';
-  for(const id of ['topScan','pageScan','runAutoNow','refreshLiveBidsBtn','testAiKeysBtn','testChatBtn'])$(id).disabled=!u.subscription_active;
+  for(const id of ['topScan','pageScan','runAutoNow','refreshLiveBidsBtn','testChatBtn'])$(id).disabled=!u.subscription_active;
+  renderAIControls();
   $('proposalAI').textContent=u.subscription_active?'✧ AI Write Proposal (Gemini / OpenAI)':'✦ Template Proposal (demo)';
   syncBidActions();
   $('connectionBanner').textContent=u.connected?`Connected to @${u.freelancer_name} (${u.environment}). Token encrypted. ${u.last_error?'Last error: '+u.last_error:''}`:'Connect your Freelancer OAuth Token below to enable live scanning, automated bidding, and auto-chat replies.';
@@ -285,7 +286,7 @@ function renderSettings(){
     aiForm.elements.gemini_key.placeholder='Provider-issued Gemini API key (blank keeps saved key)';
     aiForm.elements.openai_key.placeholder='Provider-issued secret API key (blank keeps saved key)';
     aiForm.elements.preferred_ai.value=u.preferred_ai||'auto';
-    aiForm.elements.gemini_model.value=u.gemini_model||'gemini-2.5-flash';
+    aiForm.elements.gemini_model.value=u.gemini_model||'gemini-3.5-flash-lite';
     aiForm.elements.openai_model.value=u.openai_model||'gpt-4.1-mini';
     $('geminiMaskBadge').textContent=u.has_gemini_key?`(Saved: ${u.gemini_key_masked})`:'(Not set)';
     $('openaiMaskBadge').textContent=u.has_openai_key?`(Saved: ${u.openai_key_masked})`:'(Not set)';
@@ -365,34 +366,70 @@ $('runAutoNow').onclick=async()=>{
   }catch(e){notify(e.message,true)}finally{if(S.me)renderStatus()}
 };
 
+function aiFormSettings(){
+  const f=$('aiKeysForm');
+  return {
+    preferred_ai:f.elements.preferred_ai.value,
+    gemini_key:f.elements.gemini_key.value,
+    gemini_model:f.elements.gemini_model.value,
+    openai_key:f.elements.openai_key.value,
+    openai_model:f.elements.openai_model.value,
+    clear_gemini:f.elements.clear_gemini.checked,
+    clear_openai:f.elements.clear_openai.checked
+  };
+}
+function savedAISettings(){
+  const u=S.me||{};
+  return JSON.stringify([u.preferred_ai,u.gemini_model,u.openai_model,u.gemini_key_masked,u.openai_key_masked,u.has_gemini_key,u.has_openai_key]);
+}
+function renderAIControls(){
+  const f=$('aiKeysForm'),submit=f?.querySelector?.('button[type="submit"]');
+  if(submit)submit.disabled=!!S.aiBusy;
+  if($('testAiKeysBtn'))$('testAiKeysBtn').disabled=!!S.aiBusy||!S.me?.subscription_active;
+}
+function aiSettingsChanged(){
+  S.aiRevision++;
+  $('aiTestResultBox').textContent='AI settings changed. Save your changes, then test the saved keys.';
+  $('aiTestResultBox').classList.remove('hidden');
+}
 if($('aiKeysForm')){
-  $('aiKeysForm').onsubmit=async e=>{
+  const f=$('aiKeysForm');
+  f.addEventListener('input',aiSettingsChanged);
+  f.addEventListener('change',aiSettingsChanged);
+  f.onsubmit=async e=>{
     e.preventDefault();
-    const f=e.currentTarget;
+    if(S.aiBusy||!S.me)return;
+    const epoch=S.epoch,accountId=S.me.id,snapshot=aiFormSettings();
+    S.aiBusy='save';S.aiRevision++;renderAIControls();
+    $('aiTestResultBox').textContent='Saving AI settings…';
+    $('aiTestResultBox').classList.remove('hidden');
     try{
-      const x=await post('/api/ai-keys',{
-        preferred_ai:f.elements.preferred_ai.value,
-        gemini_key:f.elements.gemini_key.value,
-        gemini_model:f.elements.gemini_model.value,
-        openai_key:f.elements.openai_key.value,
-        openai_model:f.elements.openai_model.value,
-        clear_gemini:f.elements.clear_gemini.checked,
-        clear_openai:f.elements.clear_openai.checked
-      });
-      f.elements.gemini_key.value='';f.elements.openai_key.value='';f.elements.clear_gemini.checked=false;f.elements.clear_openai.checked=false;
+      const x=await post('/api/ai-keys',snapshot);
+      if(epoch!==S.epoch||S.me?.id!==accountId)return;
+      if(x.user?.id!==accountId){resetSession();window.location.reload();throw Error('Session changed');}
+      // Keep edits made while this request was running. Only clear the exact
+      // credential values that were successfully saved by this request.
+      const current=aiFormSettings();
+      S.refreshRevision++;
       S.me=x.user;S.ai_provider=x.ai_provider;
       renderSettings();
-      $('aiTestResultBox').textContent='Configuration saved. Click Test saved AI keys to verify these settings.';
+      for(const [field,value] of Object.entries(current)){
+        if(field==='gemini_key'||field==='openai_key')f.elements[field].value=value===snapshot[field]?'':value;
+        else if(field==='clear_gemini'||field==='clear_openai')f.elements[field].checked=value===snapshot[field]?false:value;
+        else if(value!==snapshot[field])f.elements[field].value=value;
+      }
+      const pending=hasUnsavedAISettings();
+      $('aiTestResultBox').textContent=pending?'Configuration saved. Newer edits are still unsaved; save them before testing.':'Configuration saved. Click Test saved AI keys to verify these settings.';
       $('aiTestResultBox').classList.remove('hidden');
-      notify('AI keys encrypted and saved. Run a saved-key test to verify access.');
-    }catch(ex){notify(ex.message,true)}
+      notify(pending?'Earlier settings saved. Your newer edits are still unsaved.':'AI keys encrypted and saved. Run a saved-key test to verify access.');
+    }catch(ex){notify(ex.message,true)}finally{if(epoch===S.epoch){S.aiBusy='';renderAIControls();}}
   };
 }
 
 function hasUnsavedAISettings(){
   const f=$('aiKeysForm'),u=S.me||{};
   return !!(f.elements.gemini_key.value.trim()||f.elements.openai_key.value.trim()||f.elements.clear_gemini.checked||f.elements.clear_openai.checked||
-    f.elements.gemini_model.value.trim()!==(u.gemini_model||'gemini-2.5-flash')||
+    f.elements.gemini_model.value.trim()!==(u.gemini_model||'gemini-3.5-flash-lite')||
     f.elements.openai_model.value.trim()!==(u.openai_model||'gpt-4.1-mini')||
     f.elements.preferred_ai.value!==(u.preferred_ai||'auto'));
 }
@@ -413,25 +450,43 @@ function aiDiagnosticsHTML(g,o){
   const modelList=models.length?(listed?`<details class="mt-6"><summary>Gemini model catalog (generation access unverified)</summary><ul>${modelItems}</ul>${more}</details>`:`<div class="mt-6"><b>Gemini models reported for this saved key:</b><ul>${modelItems}</ul>${more}</div>`):'';
   const discovery=g.model_discovery_message?`<div class="mt-6">${esc(g.model_discovery_message)}</div>`:'';
   const partial=g.model_discovery_complete===false&&models.length?'<div class="mt-6">This model list may be incomplete.</div>':'';
+  const recommendation=!g.ok&&Number(g.status_code)===404&&g.recommended_model==='gemini-3.5-flash-lite'?`<div class="mt-6">Google limits Gemini 2.5 access to existing users. Try the recommended Gemini 3.5 Flash-Lite model; its catalog listing still does not verify generation access. <a href="https://ai.google.dev/gemini-api/docs/deprecations" target="_blank" rel="noopener noreferrer">Google model availability</a>. ${S.me?.gemini_key_masked?'<button type="button" id="useRecommendedGeminiBtn" class="secondary mt-6">Use gemini-3.5-flash-lite</button>':'The server operator must update GEMINI_MODEL for a shared server key.'}</div>`:'';
   const keyIdentifier=!o.ok&&Number(o.status_code)===401&&o.credential_hint==='possible_key_identifier'?'<div class="mt-6">This saved value resembles an OpenAI key ID. An active key record is different from its secret value. Copy the complete secret shown when creating an API key; a key ID or masked value cannot authenticate.</div>':'';
   const authentication=Number(o.status_code)===401?'<div class="mt-6">Authentication was rejected. Create a new secret API key in your provider dashboard, save it here, then test the saved key again. For direct OpenAI access, use <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">OpenAI API keys</a>.</div>':'';
-  return `<div><b>Google Gemini (${esc(g.model||'gemini')}):</b> <span class="tag ${g.ok?'green':'orange'}">${g.ok?'TEST PASSED ✓':'NOT VERIFIED'}</span> ${esc(g.message||'')}</div>${providerCodeHTML(g)}${modelGuidance}${modelList}${discovery}${partial}<div class="mt-6"><b>OpenAI ChatGPT (${esc(o.model||'gpt')}):</b> <span class="tag ${o.ok?'green':'orange'}">${o.ok?'TEST PASSED ✓':'NOT VERIFIED'}</span> ${esc(o.message||'')}</div>${providerCodeHTML(o)}${keyIdentifier}${authentication}`;
+  return `<div><b>Google Gemini (${esc(g.model||'gemini')}):</b> <span class="tag ${g.ok?'green':'orange'}">${g.ok?'TEST PASSED ✓':'NOT VERIFIED'}</span> ${esc(g.message||'')}</div>${providerCodeHTML(g)}${recommendation}${modelGuidance}${modelList}${discovery}${partial}<div class="mt-6"><b>OpenAI ChatGPT (${esc(o.model||'gpt')}):</b> <span class="tag ${o.ok?'green':'orange'}">${o.ok?'TEST PASSED ✓':'NOT VERIFIED'}</span> ${esc(o.message||'')}</div>${providerCodeHTML(o)}${keyIdentifier}${authentication}`;
 }
 
 if($('testAiKeysBtn')){
   $('testAiKeysBtn').textContent='Test saved AI keys';
   $('testAiKeysBtn').onclick=async()=>{
+    if(S.aiBusy||!S.me)return;
     if(hasUnsavedAISettings()){
       $('aiTestResultBox').textContent='You have unsaved AI key, model, or provider changes. Click Save Gemini & ChatGPT Keys first, then Test saved AI keys. Unsaved credentials have not been tested.';
       $('aiTestResultBox').classList.remove('hidden');
       return;
     }
-    $('testAiKeysBtn').disabled=true;
+    const epoch=S.epoch,accountId=S.me.id,revision=++S.aiRevision;
+    const snapshot=JSON.stringify(aiFormSettings()),saved=savedAISettings();
+    S.aiBusy='test';renderAIControls();
+    $('aiTestResultBox').textContent='Testing saved AI keys…';
+    $('aiTestResultBox').classList.remove('hidden');
     try{
       const x=await post('/api/ai-keys/test',{provider:'both'});
+      if(epoch!==S.epoch||S.me?.id!==accountId)return;
+      if(revision!==S.aiRevision||snapshot!==JSON.stringify(aiFormSettings())||saved!==savedAISettings()){
+        $('aiTestResultBox').textContent='AI settings changed during this test. The old result was discarded; save your changes and test again.';
+        return;
+      }
       $('aiTestResultBox').innerHTML=aiDiagnosticsHTML(x.results?.gemini||{},x.results?.openai||{});
       $('aiTestResultBox').classList.remove('hidden');
-    }catch(ex){notify(ex.message,true)}finally{if(S.me)renderStatus()}
+      const recommended=$('useRecommendedGeminiBtn');
+      if(recommended)recommended.onclick=()=>{
+        if(S.aiBusy||!S.me?.gemini_key_masked)return;
+        $('aiKeysForm').elements.gemini_model.value='gemini-3.5-flash-lite';
+        aiSettingsChanged();
+        $('aiKeysForm').elements.gemini_model.focus?.();
+      };
+    }catch(ex){notify(ex.message,true)}finally{if(epoch===S.epoch){S.aiBusy='';renderAIControls();}}
   };
 }
 

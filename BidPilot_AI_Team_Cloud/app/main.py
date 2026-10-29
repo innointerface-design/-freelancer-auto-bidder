@@ -154,7 +154,7 @@ class PaymentDecisionIn(InputModel):
 class AIKeysIn(InputModel):
     preferred_ai: Literal['auto', 'gemini', 'openai', 'smart_builtin'] = 'auto'
     gemini_key: str = Field(default='', max_length=500)
-    gemini_model: str = Field(default='gemini-2.5-flash', max_length=60)
+    gemini_model: str = Field(default='gemini-3.5-flash-lite', max_length=60)
     openai_key: str = Field(default='', max_length=500)
     openai_model: str = Field(default='gpt-4.1-mini', max_length=60)
     clear_gemini: bool = False

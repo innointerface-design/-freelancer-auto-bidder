@@ -28,6 +28,7 @@ def test_private_setup_preserves_password_and_existing_file():
             assert base64.b64decode(values['ADMIN_PASSWORD_B64']).decode('utf-8') == password
             assert values['PLATFORM_AUTOBID_APPROVED'] == 'false'
             assert values['GEMINI_API_KEY'] == ''
+            assert values['GEMINI_MODEL'] == 'gemini-3.5-flash-lite'
             assert values['OPENAI_API_KEY'] == ''
             if os.name == 'posix':
                 assert stat.S_IMODE(path.stat().st_mode) == 0o600

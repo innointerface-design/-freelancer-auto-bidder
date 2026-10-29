@@ -2,6 +2,8 @@
 
 BidPilot is a FastAPI service with a web dashboard, PostgreSQL/SQLite storage and a separate scanner worker. It connects to each user's Freelancer account and can generate proposal drafts using Gemini/OpenAI or the local template generator. Cloud credentials are encrypted at rest; account passwords are hashed. Security depends on the deployment, secret protection and ongoing maintenance. No review can guarantee that software is free of every bug.
 
+The 30 October update fixes races when saving and testing AI credentials and uses `gemini-3.5-flash-lite` for new configurations. Google [limits Gemini 2.5 access to existing users](https://ai.google.dev/gemini-api/docs/deprecations); a 404 on a catalog-listed 2.5 model may reflect this policy. When the catalog reports the recommended model, the failed test offers an explicit model-selection action. Save and test after selecting; existing users' model choices and operator environment settings are preserved. Gemini requests use model sampling defaults for compatibility with current models. OpenAI `401 invalid_api_key` still requires a valid full provider secret; an active key record ID cannot substitute for that secret.
+
 ## Subscription behavior
 
 | Plan ID | Price | App bid quota |

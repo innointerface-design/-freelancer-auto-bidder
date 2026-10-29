@@ -144,7 +144,7 @@ def resolve_ai_credentials(u=None):
     from .db import decrypt_secret
     own_gemini = decrypt_secret(getattr(u, 'gemini_key_cipher', ''))
     own_openai = decrypt_secret(getattr(u, 'openai_key_cipher', ''))
-    server_gemini_model = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash').strip()
+    server_gemini_model = os.getenv('GEMINI_MODEL', 'gemini-3.5-flash-lite').strip()
     server_openai_model = os.getenv('OPENAI_MODEL', 'gpt-4.1-mini').strip()
     return {
         'preferred_ai': (getattr(u, 'preferred_ai', 'auto') or 'auto'),
@@ -401,7 +401,9 @@ def _call_gemini(api_key, model, prompt, max_tokens=380):
     model = str(model or '').removeprefix('models/')
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,119}', model):
         raise AIProviderError('Invalid Gemini model name')
-    generation = {'maxOutputTokens': max(64, min(int(max_tokens), 4096)), 'temperature': 0.7}
+    # Use the model's sampling defaults. Newer Gemini models no longer accept
+    # an explicit temperature, while older models also work without one.
+    generation = {'maxOutputTokens': max(64, min(int(max_tokens), 4096))}
     # Flash 2.5 otherwise spends tiny diagnostic output budgets on hidden thinking.
     if model.startswith('gemini-2.5-flash'):
         generation['thinkingConfig'] = {'thinkingBudget': 0}
@@ -554,6 +556,20 @@ def test_ai_connection(u, provider='both'):
                     result['message'] = str(exc) + ' The selected model was not returned in the catalog pages read. ' + catalog_note
                     if result['available_models'] and result['model_discovery_complete']:
                         result['model_discovery_message'] = 'Review the returned model IDs and provider codes before changing configuration. ' + catalog_note
+                # Google limits 2.5 generation access to existing users. This
+                # is one possible cause of a 404, not a diagnosis from listing.
+                # Recommend only an exact model reported for this credential;
+                # leave configuration and generation to an explicit user action.
+                if (exc.failure_kind == 'generation_access_unconfirmed'
+                        and re.fullmatch(r'gemini-2\.5(?:[.-][A-Za-z0-9._-]+)?', selected_id)
+                        and 'gemini-3.5-flash-lite' in result['available_models']):
+                    result['recommended_model'] = 'gemini-3.5-flash-lite'
+                    result['recommendation_message'] = (
+                        'Google limits Gemini 2.5 access to existing users; this may explain the failure, '
+                        'but the cause is not confirmed. The catalog reports gemini-3.5-flash-lite. '
+                        'Select and save it explicitly, then test generation access. '
+                        'No model has been changed automatically.'
+                    )
             results[name] = result
         except Exception:
             results[name] = {'ok': False, 'model': model, 'message': 'Unexpected provider response; check model and server configuration'}

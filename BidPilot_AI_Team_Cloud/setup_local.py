@@ -75,7 +75,7 @@ def main():
         'SCAN_SECONDS': '60',
         'POSTGRES_PASSWORD': secrets.token_urlsafe(36),
         'GEMINI_API_KEY': '',
-        'GEMINI_MODEL': 'gemini-2.5-flash',
+        'GEMINI_MODEL': 'gemini-3.5-flash-lite',
         'OPENAI_API_KEY': '',
         'OPENAI_MODEL': 'gpt-4.1-mini',
         'OPENAI_BASE_URL': 'https://api.openai.com/v1',

@@ -58,7 +58,7 @@ Local browser mein `http://127.0.0.1:8000` kholein. Development/test mode mein `
 Purana code login par `Server returned an unreadable response (403)` dikhaye to server Ctrl+C se band karein, repository root mein `git pull --ff-only` karein, phir app folder se server restart karein. Browser Ctrl+Shift+R se refresh karein. Private `.env`/database delete ya recreate na karein.
 
 - OpenAI **401**: provider ne credential accept nahi kiya. Provider dashboard se nayi poori **secret API key** create karke app mein save karein. Key ID, ChatGPT login password ya subscription ko API secret na samjhein. Fresh key chat mein share na karein.
-- Gemini **404**: selected model/endpoint available nahi. Updated saved-key test official API se generation-supported models ki read-only list lene ki koshish karta hai. Agar list mile to model ID copy karke Gemini Model mein set, **Save**, phir **Test saved AI keys** karein. Koi model automatically change nahi hota. Discovery fail ho to uska message dekhein; 404 se akelay key ki validity confirm nahi hoti.
+- Gemini **404**: generation resource/access available nahi; exact cause code se check karein. Google 2.5 access ko existing users tak limited rakhta hai. Neeche current-model instructions dekhein. Test official API se generation-supported models ki read-only list lene ki koshish karta hai. Koi model automatically change nahi hota; 404 se akelay key ki validity confirm nahi hoti.
 - Key/model/preference mein changes ke baad pehle **Save** zaroor karein. Test sirf saved configuration use karta hai. Configured provider label API success ka proof nahi; successful test alag status dikhata hai.
 
 ## Second founder email wala startup error
@@ -69,7 +69,11 @@ Apni existing .env aur database preserve karein. Repository update aur server re
 
 ## Wahi API error dobara aaye
 
-Gemini ka selected model catalog mein listed ho aur generation404 phir bhi aaye to baar-baar model names na badlein. Updated test mein **Provider code** ke HTTP/status/reason/kind/body fields milte hain; in codes se key restriction, service/project configuration, ya unknown generation access ko alag samajh sakte hain. Codes unknown hon to exact wajah abhi confirm nahi hui. Raw response ya key share karne ki zaroorat nahi.
+Google ki [current access policy](https://ai.google.dev/gemini-api/docs/deprecations) ke mutabiq Gemini 2.5 ka access pehle se istemal karne walay users tak limited hai. Naye projects ke liye `gemini-3.5-flash-lite` recommended hai. Yeh aapke 404 ki mumkin wajah hai; model catalog mein listed hona generation access ka proof nahi.
+
+Updated app mein 2.5 test par 404 aaye aur catalog mein recommended model ho to **Use gemini-3.5-flash-lite** button model field bhar deta hai. Uske baad **Save Gemini & ChatGPT Keys**, phir **Test saved AI keys** karein. Button key ya model automatically save nahi karta. Existing saved choices aur private `.env` preserve rehte hain. Shared server key ho to operator privately `.env` mein `GEMINI_MODEL` update kare aur web/worker restart kare.
+
+Naye accounts/setup ka default `gemini-3.5-flash-lite` hai. Request se purana optional temperature parameter hata diya gaya hai taake current Gemini models ke saath compatibility rahe. Provider test fail ho to **Provider code** dekhein; raw response ya key share na karein.
 
 OpenAI401 par agar purani saved key hi test ho rahi hai, provider dashboard se **nayi complete secret API key** bana kar app mein Save karein. Key ID ya account password use na karein. Key sirf app/private configuration mein rakhein; chat mein na bhejein. New key ke test ka result dekh kar agla step decide karein.
 
@@ -78,3 +82,18 @@ OpenAI401 par agar purani saved key hi test ho rahi hai, provider dashboard se *
 OpenAI key ka active record/ID aur complete secret value alag hain. API record ka `key_...` ID ya masked value authentication secret ki jagah use nahi hota. App key format ko dekh kar reject nahi karti; official endpoint ke explicit invalid-key401 ke baad hi possible-ID guidance dikhati hai.
 
 App/database se alag check ke liye isi folder mein `.venv/bin/python check_openai_key.py` chalayein. Secret ko hidden prompt mein paste karein; terminal par text nazar nahi aayega aur key save nahi hogi. Checker sirf official OpenAI models endpoint ko GET karta hai. Result401/credential_rejected ho to provider ne is value ko app ke baghair bhi reject kiya. Result200/model_read_access aaye aur app test401 ho to saved value/configuration ko compare karna hoga. Model-list200 chat model access ya billing ka proof nahi hai. Sirf result screenshot share karein, key nahi.
+
+## GitHub se latest update — existing WSL installation
+
+Server wale terminal mein Ctrl+C karein, phir:
+
+```bash
+cd ~/bidpilot-v2 &&
+git pull --ff-only &&
+cd BidPilot_AI_Team_Cloud &&
+.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+Browser mein `http://127.0.0.1:8000` kholein aur Ctrl+Shift+R karein. Is update ke liye dependencies reinstall ya `.env`/database delete karne ki zaroorat nahi. Save/test ke dauran repeat clicks block hain; nayi typed key erase nahi hoti aur purani configuration ka late test result current result ke taur par nahi dikhaya jata.
+
+30 October ko di gayi `BidPilot_AI_All_Freelancer_Bids_Pro_FIXED.zip` mein sirf `venv` aur `requirements.txt` thay; application source nahi tha. GitHub ka `downloads/BidPilot_AI_Updated_v2.zip` complete source package hai. Venv, customer database aur private configuration release mein shamil nahi hain; isi liye ZIP ka size 16 MB se chhota hai.

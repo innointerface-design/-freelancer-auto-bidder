@@ -20,9 +20,9 @@ const nodes=new Map();
 function node(id){
  if(!nodes.has(id)){
   const classes=new Set();
-  const el={value:'',checked:false,disabled:false,innerHTML:'',textContent:'',dataset:{},
+  const el={value:'',checked:false,disabled:false,innerHTML:'',textContent:'',dataset:{},listeners:{},
    classList:{add:v=>classes.add(v),remove:v=>classes.delete(v),contains:v=>classes.has(v),toggle:(v,on)=>{if(on)classes.add(v);else classes.delete(v)}},
-   addEventListener(){},reset(){},removeAttribute(){}};
+   addEventListener(type,handler){(this.listeners[type]??=[]).push(handler)},querySelector(selector){return selector==='button[type="submit"]'?node(id+':submit'):null},toggleAttribute(name,on){if(name==='disabled')this.disabled=on},focus(){},reset(){},removeAttribute(){}};
   el.elements=new Proxy({}, {get:(_,key)=>node(id+':'+String(key))});nodes.set(id,el);
  }
  return nodes.get(id);
@@ -180,6 +180,85 @@ vm.runInContext(source,sandbox);
  assert.ok(!unknownHint.includes('resembles an OpenAI key ID')&&!unknownHint.includes('<img'));
  const nonAuthenticationHint=vm.runInContext("aiDiagnosticsHTML({}, {ok:false,status_code:404,credential_hint:'possible_key_identifier'})",sandbox);
  assert.ok(!nonAuthenticationHint.includes('resembles an OpenAI key ID'));
+
+ // A save must serialize mutations and preserve newer credentials/model edits.
+ const aiForm=node('aiKeysForm');
+ vm.runInContext("S.me={id:2,role:'member',name:'Test Member',email:'member@example.test',subscription_active:true,preferred_ai:'auto',gemini_model:'saved-gemini-model',openai_model:'saved-openai-model'};renderSettings();",sandbox);
+ node('aiKeysForm:gemini_key').value='SYNTHETIC-KEY-A';
+ let finishSave,aiSaveCalls=0;
+ sandbox.fetch=async(url,opts)=>{aiSaveCalls++;assert.equal(url,'/api/ai-keys');assert.equal(JSON.parse(opts.body).gemini_key,'SYNTHETIC-KEY-A');return new Promise(resolve=>{finishSave=resolve})};
+ const saving=vm.runInContext("$('aiKeysForm').onsubmit({preventDefault(){}})",sandbox);
+ assert.equal(node('testAiKeysBtn').disabled,true);assert.equal(node('aiKeysForm:submit').disabled,true);
+ vm.runInContext('renderStatus()',sandbox);
+ assert.equal(node('testAiKeysBtn').disabled,true);assert.equal(node('aiKeysForm:submit').disabled,true);
+ await vm.runInContext("$('testAiKeysBtn').onclick()",sandbox);
+ await vm.runInContext("$('aiKeysForm').onsubmit({preventDefault(){}})",sandbox);
+ assert.equal(aiSaveCalls,1);
+ node('aiKeysForm:gemini_key').value='SYNTHETIC-KEY-B';node('aiKeysForm:openai_key').value='SYNTHETIC-NEW-OPENAI';
+ node('aiKeysForm:gemini_model').value='newer-unsaved-model';node('aiKeysForm:preferred_ai').value='openai';
+ for(const listener of aiForm.listeners.input)listener();
+ finishSave({ok:true,status:200,json:async()=>({user:{id:2,role:'member',name:'Test Member',email:'member@example.test',subscription_active:true,preferred_ai:'auto',gemini_model:'saved-gemini-model',openai_model:'saved-openai-model',has_gemini_key:true,gemini_key_masked:'synthetic-mask-A'},ai_provider:'Gemini configured'})});
+ await saving;
+ assert.equal(node('aiKeysForm:gemini_key').value,'SYNTHETIC-KEY-B');assert.equal(node('aiKeysForm:openai_key').value,'SYNTHETIC-NEW-OPENAI');
+ assert.equal(node('aiKeysForm:gemini_model').value,'newer-unsaved-model');assert.equal(node('aiKeysForm:preferred_ai').value,'openai');
+ assert.match(node('aiTestResultBox').textContent,/Newer edits are still unsaved/);
+ assert.equal(node('aiKeysForm:submit').disabled,false);assert.equal(node('testAiKeysBtn').disabled,false);
+ assert.equal(vm.runInContext('hasUnsavedAISettings()',sandbox),true);
+ // A slow test cannot be duplicated by polling and cannot overwrite later edits.
+ node('aiKeysForm:gemini_key').value='';node('aiKeysForm:openai_key').value='';vm.runInContext('renderSettings()',sandbox);
+ let finishTest,slowTestCalls=0;
+ sandbox.fetch=async(url)=>{slowTestCalls++;assert.equal(url,'/api/ai-keys/test');return new Promise(resolve=>{finishTest=resolve})};
+ const testing=vm.runInContext("$('testAiKeysBtn').onclick()",sandbox);
+ vm.runInContext('renderStatus()',sandbox);
+ assert.equal(node('testAiKeysBtn').disabled,true);assert.equal(node('aiKeysForm:submit').disabled,true);
+ await vm.runInContext("$('testAiKeysBtn').onclick()",sandbox);
+ await vm.runInContext("$('aiKeysForm').onsubmit({preventDefault(){}})",sandbox);
+ assert.equal(slowTestCalls,1);
+ node('aiKeysForm:openai_key').value='SYNTHETIC-EDIT-DURING-TEST';
+ for(const listener of aiForm.listeners.input)listener();
+ finishTest({ok:true,status:200,json:async()=>({results:{openai:{ok:true,message:'OLD-RESULT-MUST-NOT-RENDER'}}})});
+ await testing;
+ assert.match(node('aiTestResultBox').textContent,/old result was discarded/);
+ assert.ok(!node('aiTestResultBox').innerHTML.includes('OLD-RESULT-MUST-NOT-RENDER'));
+ assert.equal(node('aiKeysForm:openai_key').value,'SYNTHETIC-EDIT-DURING-TEST');
+ assert.equal(node('testAiKeysBtn').disabled,false);
+ // Changing and then reverting input still invalidates a result for the old revision.
+ node('aiKeysForm:openai_key').value='';
+ const revertedTest=vm.runInContext("$('testAiKeysBtn').onclick()",sandbox);
+ node('aiKeysForm:gemini_model').value='temporary-edit';for(const listener of aiForm.listeners.change)listener();
+ node('aiKeysForm:gemini_model').value='saved-gemini-model';
+ finishTest({ok:true,status:200,json:async()=>({results:{gemini:{ok:true,message:'STALE-REVERTED-RESULT'}}})});
+ await revertedTest;
+ assert.match(node('aiTestResultBox').textContent,/old result was discarded/);
+ assert.ok(!node('aiTestResultBox').innerHTML.includes('STALE-REVERTED-RESULT'));
+ // Background saved-configuration changes also invalidate an otherwise unchanged form.
+ const replacedTest=vm.runInContext("$('testAiKeysBtn').onclick()",sandbox);
+ vm.runInContext("S.me.gemini_key_masked='synthetic-new-saved-mask'",sandbox);
+ finishTest({ok:true,status:200,json:async()=>({results:{gemini:{ok:true,message:'STALE-SAVED-KEY-RESULT'}}})});
+ await replacedTest;
+ assert.match(node('aiTestResultBox').textContent,/old result was discarded/);
+ assert.ok(!node('aiTestResultBox').innerHTML.includes('STALE-SAVED-KEY-RESULT'));
+ // A recommendation is explicit selection only, never a hidden save or generation call.
+ let recommendationCalls=0;
+ sandbox.fetch=async(url)=>{recommendationCalls++;assert.equal(url,'/api/ai-keys/test');return {ok:true,status:200,json:async()=>({results:{gemini:{ok:false,status_code:404,model:'saved-gemini-model',recommended_model:'gemini-3.5-flash-lite'}}})}};
+ await vm.runInContext("$('testAiKeysBtn').onclick()",sandbox);
+ assert.match(node('aiTestResultBox').innerHTML,/Use gemini-3\.5-flash-lite/);
+ assert.match(node('aiTestResultBox').innerHTML,/https:\/\/ai\.google\.dev\/gemini-api\/docs\/deprecations/);
+ assert.equal(node('aiKeysForm:gemini_model').value,'saved-gemini-model');
+ node('useRecommendedGeminiBtn').onclick();
+ assert.equal(node('aiKeysForm:gemini_model').value,'gemini-3.5-flash-lite');
+ assert.equal(node('aiKeysForm:gemini_key').value,'');assert.equal(node('aiKeysForm:openai_key').value,'');
+ assert.equal(vm.runInContext('S.me.gemini_model',sandbox),'saved-gemini-model');
+ assert.equal(recommendationCalls,1);assert.equal(vm.runInContext('hasUnsavedAISettings()',sandbox),true);
+ vm.runInContext("S.me.gemini_key_masked='';",sandbox);
+ const sharedRecommendation=vm.runInContext("aiDiagnosticsHTML({ok:false,status_code:404,recommended_model:'gemini-3.5-flash-lite'}, {})",sandbox);
+ assert.ok(!sharedRecommendation.includes('id="useRecommendedGeminiBtn"'));
+ assert.match(sharedRecommendation,/server operator must update GEMINI_MODEL/);
+ vm.runInContext("S.me.gemini_key_masked='synthetic-personal-mask'",sandbox);
+ const invalidRecommendation=vm.runInContext("aiDiagnosticsHTML({ok:false,status_code:404,recommended_model:'<img src=x>'}, {})",sandbox);
+ assert.ok(!invalidRecommendation.includes('useRecommendedGeminiBtn')&&!invalidRecommendation.includes('<img'));
+ const non404Recommendation=vm.runInContext("aiDiagnosticsHTML({ok:false,status_code:401,recommended_model:'gemini-3.5-flash-lite'}, {})",sandbox);
+ assert.ok(!non404Recommendation.includes('useRecommendedGeminiBtn'));
  console.log('Frontend security, account flow and asynchronous race checks passed');
 })().catch(e=>{console.error(e);process.exitCode=1});
 '''

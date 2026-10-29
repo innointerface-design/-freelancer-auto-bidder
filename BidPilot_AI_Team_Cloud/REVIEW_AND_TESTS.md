@@ -1,6 +1,6 @@
 # BidPilot AI — second review / updated v2
 
-Second review and subsequent login/API-diagnostic patch completed 29 October 2026. Supersedes the earlier reviewed ZIP. This release repairs the uploaded project; the accompanying pasted Gemini response was reference material, not code automatically trusted or installed. This is a tested revision, not a guarantee that every possible defect or attack has been eliminated.
+Second review and subsequent login/API-diagnostic patches completed 29–30 October 2026. Supersedes the earlier reviewed ZIP. This release repairs the uploaded project; the accompanying pasted Gemini response was reference material, not code automatically trusted or installed. The subsequently uploaded 16 MB `BidPilot_AI_All_Freelancer_Bids_Pro_FIXED.zip` contains only a Python venv and requirements.txt, with no application source; fixes therefore use the complete reviewed source already in this repository. This is a tested revision, not a guarantee that every possible defect or attack has been eliminated.
 
 ## Changes made
 
@@ -35,11 +35,11 @@ Second review and subsequent login/API-diagnostic patch completed 29 October 202
 
 | Check | Result |
 | --- | --- |
-| Full automated suite | **217 passed plus 12 subtests**, 48.74 seconds on the latest patch run |
+| Full automated suite | **222 passed plus 19 subtests**, 29.59 seconds on the 30 October patch run |
 | External API protocol/security cases | Controlled mocks; no real credentials or bids |
 | Chromium desktop/mobile smoke | 13 flows passed (including same-browser owner→member privacy and post-approval plan refresh): owner login, demo proposal/draft, settings, billing, member creation, logout, mobile signup, unpaid local demo, $40 receipt submission, owner approval |
 | Browser errors | No JavaScript page errors, CSP violations, unexpected API failures or external requests; only expected anonymous `/api/me` 401 responses |
-| Docker build | Previous reviewed v2 passed with pinned dependencies and temporary build-only proxy CA mount; not repeated for this HTTP/diagnostic-only patch |
+| Docker build | Previous reviewed v2 passed with pinned dependencies and temporary build-only proxy CA mount; not repeated for the current provider/default/frontend patch |
 | Actual PostgreSQL 17 + production app | Passed startup, login, Secure/HttpOnly cookies, CSRF rejection, revoked logout, registration, member/admin isolation, fixed prices and refusal of unconfigured payment methods |
 | Actual PostgreSQL concurrency/migrations | Distinct-project hourly reservation cap, one-time payment approval, renewal/anchor preservation, legacy chat-status migration and duplicate-account constraint passed |
 | Worker container | Startup passed; automatic outbound actions remained off in this deployment smoke |
@@ -56,7 +56,7 @@ The user's real browser exposed an address mismatch: setup configured PUBLIC_URL
 
 Gemini404 saved-key diagnostics can list generation-supported models using only read-only official GET calls; up to3 bounded pages, no redirects, no automatic model change or alternative generation. OpenAI401 is reported as credential rejection. The UI distinguishes configured from verified, blocks tests of unsaved changes, escapes all model-list content, and gives manual Save→Test instructions.
 
-Current verification: 217 application tests plus12 subtests pass; 340 existing repository tests and Ruff checks pass separately. Actual Chromium checked localhost login while configured127, authenticated CSRF mutation, unsaved-test blocking and mocked Gemini404/OpenAI401 rendering. No unexpected browser errors or external requests. Deployment Docker/PostgreSQL/Caddy results above describe the prior reviewed v2 deployment, not a new production rollout. Neither the user's keys nor their machine were accessed by these tests.
+Verification at the 29 October patch: 217 application tests plus12 subtests passed; 340 existing repository tests and Ruff checks pass separately. Actual Chromium checked localhost login while configured127, authenticated CSRF mutation, unsaved-test blocking and mocked Gemini404/OpenAI401 rendering. No unexpected browser errors or external requests. Deployment Docker/PostgreSQL/Caddy results above describe the prior reviewed v2 deployment, not a new production rollout. Neither the user's keys nor their machine were accessed by these tests.
 
 ## Subsequent founder-bootstrap startup repair
 
@@ -76,7 +76,21 @@ Official OpenAI documentation distinguishes the key record ID from the secret va
 
 A full endpoint regression saves an identifier-like value and observes its controlled401, then saves a replacement secret, verifies encrypted storage/decryption and the exact outgoing Bearer header at the official chat endpoint, and observes a controlled success. This verifies value preservation, not real-key validity. Five API hint regressions plus the full saved-key test pass.
 
-A new independent `check_openai_key.py` uses only standard-library HTTPS, fixed official model-list GET, hidden input, no app/config/database imports, no credential persistence, bounded responses and disabled redirects.25 mocked regressions cover auth transport, unexpected/oversized responses,401/403 distinctions, secret redaction, hidden-input failure and no app-state access. Current full application suite:217 tests plus12 subtests passed. User live authentication still requires private testing on their own machine; no actual supplied secret was used here.
+A new independent `check_openai_key.py` uses only standard-library HTTPS, fixed official model-list GET, hidden input, no app/config/database imports, no credential persistence, bounded responses and disabled redirects.25 mocked regressions cover auth transport, unexpected/oversized responses,401/403 distinctions, secret redaction, hidden-input failure and no app-state access. At that patch, the full application suite had217 tests plus12 subtests passed. User live authentication still requires private testing on their own machine; no actual supplied secret was used here.
+
+## Current-model compatibility and save/test races — 30 October
+
+Current full application suite: **222 passed plus 19 subtests**, 29.59 seconds. JavaScript syntax and git diff checks passed. One upstream TestClient deprecation warning remains.
+
+Google's [model access policy](https://ai.google.dev/gemini-api/docs/deprecations) now limits Gemini 2.5 access to existing users. This is a possible explanation for a catalog-listed model returning 404, not proof of the user's account configuration. New accounts and setup files default to `gemini-3.5-flash-lite`; existing saved choices and server environment overrides are preserved. Failed 2.5 generation tests recommend that exact replacement only when the read-only catalog reports generateContent support and the error classification does not identify a credential failure. The personal-key UI action fills the model field only; explicit Save and Test remain necessary. Shared-key users receive operator configuration guidance. No alternative generation request is sent automatically.
+
+Gemini requests omit the optional temperature parameter, as required by the [current generation migration guidance](https://ai.google.dev/gemini-api/docs/generate-content/whats-new-gemini-3.6). Legacy 2.5 Flash retains its supported zero-thinking budget; the current Flash-Lite model uses its default configuration. Protocol regressions check the exact path, header and supported payload.
+
+Three reproduced frontend defects are repaired: an in-flight Save no longer erases a newer key typed before the response; Save/Test cannot overlap or be re-enabled by background status polling; and results from a configuration edited during a pending Test are discarded. Configuration snapshots, revision checks and account-epoch guards preserve newer edits and prevent old responses from applying to a new session. The Node harness covers concurrent submissions, edits/reverts, saved-state changes and explicit recommendation controls. A database regression verifies new defaults while preserving existing encrypted keys, selected models and server model overrides across restarts.
+
+Actual Chromium passed five current-revision flows covering new defaults, explicit model selection and Save, a controlled successful result, pending-save input preservation, polling busy states and stale-result rejection. There were no JavaScript/CSP errors or external requests; the only API error was the expected initial anonymous `/api/me` 401. AI diagnostic responses were controlled browser routes, not live provider authentication. Existing Docker/PostgreSQL results above remain prior-revision deployment checks.
+
+OpenAI's actual `401 invalid_api_key` still requires a valid full secret. The app cannot recover a secret from its record ID, and these changes do not claim to validate the user's credentials. The supplied 16 MB ZIP contained 1,036 entries consisting only of a venv and requirements.txt; its dependencies were not installed or trusted as application code.
 
 ## What still requires your Ubuntu/staging installation
 

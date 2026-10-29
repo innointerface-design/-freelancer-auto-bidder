@@ -170,7 +170,7 @@ class User(Base):
     # Encrypted Dual AI Keys (Google Gemini + OpenAI ChatGPT) & Preferred Provider
     preferred_ai = Column(String(30), default='auto')  # auto (Gemini -> ChatGPT -> Smart AI), gemini, openai, smart_builtin
     gemini_key_cipher = Column(Text, default='')
-    gemini_model = Column(String(60), default='gemini-2.5-flash')
+    gemini_model = Column(String(60), default='gemini-3.5-flash-lite')
     openai_key_cipher = Column(Text, default='')
     openai_model = Column(String(60), default='gpt-4.1-mini')
 
@@ -378,7 +378,7 @@ def _auto_migrate_sqlite():
             ('lock_version', 'INTEGER DEFAULT 0'),
             ('preferred_ai', "VARCHAR(30) DEFAULT 'auto'"),
             ('gemini_key_cipher', "TEXT DEFAULT ''"),
-            ('gemini_model', "VARCHAR(60) DEFAULT 'gemini-2.5-flash'"),
+            ('gemini_model', "VARCHAR(60) DEFAULT 'gemini-3.5-flash-lite'"),
             ('openai_key_cipher', "TEXT DEFAULT ''"),
             ('openai_model', "VARCHAR(60) DEFAULT 'gpt-4.1-mini'"),
             ('excluded_keywords', "TEXT DEFAULT 'telegram, upfront fee, registration fee, adult, gambling'"),
@@ -592,7 +592,7 @@ def public_user(u, connection=None):
         monthly_bid_limit=u.monthly_bid_limit,
         monthly_fee=getattr(u, 'monthly_fee', 40.0),
         preferred_ai=getattr(u, 'preferred_ai', 'auto'),
-        gemini_model=getattr(u, 'gemini_model', 'gemini-2.5-flash') or 'gemini-2.5-flash',
+        gemini_model=getattr(u, 'gemini_model', 'gemini-3.5-flash-lite') or 'gemini-3.5-flash-lite',
         openai_model=getattr(u, 'openai_model', 'gpt-4.1-mini') or 'gpt-4.1-mini',
         has_gemini_key=bool(gem_raw or os.getenv('GEMINI_API_KEY', '').strip()),
         gemini_key_masked=mask_key(gem_raw),

@@ -39,10 +39,23 @@ class ProviderTests(unittest.TestCase):
             self.assertIn('untrusted quoted data', body['systemInstruction']['parts'][0]['text'])
             self.assertIn('Never agree to payments', body['systemInstruction']['parts'][0]['text'])
             self.assertEqual(body['generationConfig']['thinkingConfig']['thinkingBudget'], 0)
+            self.assertNotIn('temperature', body['generationConfig'])
             return httpx.Response(200, json={'candidates': [{'content': {'parts': [
                 {'text': 'private reasoning', 'thought': True}, {'text': 'Connected'}]}}]})
         with mock_client(handler), patch.dict(os.environ, {'GEMINI_AUTH_MODE': 'api_key'}):
             self.assertEqual(ai._call_gemini('dummy-secret', 'gemini-2.5-flash', 'test'), 'Connected')
+
+    def test_gemini_35_flash_lite_uses_supported_generation_parameters(self):
+        def handler(request):
+            self.assertEqual(request.method, 'POST')
+            self.assertEqual(str(request.url), 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent')
+            self.assertEqual(request.headers['x-goog-api-key'], 'synthetic-gemini-secret')
+            body = json.loads(request.content)
+            self.assertEqual(body['generationConfig'], {'maxOutputTokens': 128})
+            self.assertEqual(body['contents'], [{'role': 'user', 'parts': [{'text': 'test connection'}]}])
+            return httpx.Response(200, json={'candidates': [{'finishReason': 'STOP', 'content': {'parts': [{'text': 'Connected'}]}}]})
+        with mock_client(handler), patch.dict(os.environ, {'GEMINI_AUTH_MODE': 'api_key'}):
+            self.assertEqual(ai._call_gemini('synthetic-gemini-secret', 'gemini-3.5-flash-lite', 'test connection', max_tokens=128), 'Connected')
 
     def test_gemini_oauth_must_be_explicit(self):
         def handler(request):
@@ -427,6 +440,60 @@ class GeminiDiscoveryTests(unittest.TestCase):
         self.assertIn('not returned in the catalog', result['message'])
         self.assertFalse(result['selected_model_listed'])
         self.assertEqual([r.method for r in requests], ['POST', 'GET'])
+
+    def test_25_generation_404_can_recommend_exact_catalog_replacement_without_changing_model(self):
+        for selected in ('gemini-2.5-flash', 'models/gemini-2.5-flash-lite'):
+            with self.subTest(selected=selected):
+                configuration = credentials(gemini_model=selected)
+                requests = []
+                def handler(request):
+                    requests.append(request)
+                    if request.method == 'POST':
+                        self.assertEqual(request.url.path, '/v1beta/models/' + selected.removeprefix('models/') + ':generateContent')
+                        return httpx.Response(404, json={'error': {'status': 'NOT_FOUND'}})
+                    return httpx.Response(200, json={'models': [self.model(selected.removeprefix('models/')), self.model('gemini-3.5-flash-lite')]})
+                with mock_client(handler), patch.object(ai, 'resolve_ai_credentials', return_value=configuration):
+                    result = ai.test_ai_connection(None, 'gemini')['gemini']
+                self.assertFalse(result['ok'])
+                self.assertEqual(result['status_code'], 404)
+                self.assertEqual(result['provider_status'], 'NOT_FOUND')
+                self.assertEqual(result['failure_kind'], 'generation_access_unconfirmed')
+                self.assertEqual(result['recommended_model'], 'gemini-3.5-flash-lite')
+                self.assertIn('may explain', result['recommendation_message'])
+                self.assertIn('not confirmed', result['recommendation_message'])
+                self.assertTrue(result['selected_model_listed'])
+                self.assertEqual(result['model'], selected)
+                self.assertEqual(configuration['gemini_model'], selected)
+                self.assertEqual([r.method for r in requests], ['POST', 'GET'])
+
+    def test_recommendation_requires_old_family_and_exact_supported_replacement(self):
+        for selected, models in (
+                ('gemini-3.5-flash-lite', [self.model('gemini-3.5-flash-lite')]),
+                ('gemini-2.50-flash', [self.model('gemini-3.5-flash-lite')]),
+                ('gemini-2.5-flash', [self.model('gemini-3.5-flash-lite-preview')]),
+                ('gemini-2.5-flash', [self.model('gemini-3.5-flash-lite', ['embedContent'])]),
+                ('gemini-2.5-flash', [])):
+            with self.subTest(selected=selected, models=models):
+                def handler(request):
+                    if request.method == 'POST':
+                        return httpx.Response(404, json={'error': {'status': 'NOT_FOUND'}})
+                    return httpx.Response(200, json={'models': models})
+                with mock_client(handler), patch.object(ai, 'resolve_ai_credentials', return_value=credentials(gemini_model=selected)):
+                    result = ai.test_ai_connection(None, 'gemini')['gemini']
+                self.assertNotIn('recommended_model', result)
+                self.assertNotIn('recommendation_message', result)
+
+    def test_explicit_credential_rejection_404_does_not_get_model_recommendation(self):
+        def handler(request):
+            if request.method == 'POST':
+                return httpx.Response(404, json={'error': {'status': 'NOT_FOUND', 'details': [
+                    {'@type': 'type.googleapis.com/google.rpc.ErrorInfo', 'reason': 'API_KEY_NOT_FOUND'}]}})
+            return httpx.Response(200, json={'models': [self.model('gemini-3.5-flash-lite')]})
+        with mock_client(handler), patch.object(ai, 'resolve_ai_credentials', return_value=credentials()):
+            result = ai.test_ai_connection(None, 'gemini')['gemini']
+        self.assertEqual(result['failure_kind'], 'credential_rejected')
+        self.assertEqual(result['provider_reason'], 'API_KEY_NOT_FOUND')
+        self.assertNotIn('recommended_model', result)
 
     def test_listing_uses_explicit_oauth_and_pages_without_key_in_url(self):
         requests = []

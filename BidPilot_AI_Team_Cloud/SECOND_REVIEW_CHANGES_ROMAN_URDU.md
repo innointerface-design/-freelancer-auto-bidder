@@ -1,5 +1,9 @@
 # Updated v2 — kya theek hua?
 
+30 October update: AI key save/test ke races fix hain; save ke dauran typed replacement key preserve rehti hai, duplicate requests block hoti hain aur late result purani configuration ko current nahi dikhata. Naye Gemini setups `gemini-3.5-flash-lite` use karte hain; existing models preserve rehte hain. Google 2.5 access existing users tak limited rakhta hai. Agar recommended current model catalog mein ho to explicit selection button milta hai; **Save**, phir **Test saved AI keys** karein. Request mein deprecated optional temperature nahi bheja jata. OpenAI ka actual invalid-key401 valid full secret ke baghair fix nahi ho sakta.
+
+Nayi uploaded 16 MB `FIXED.zip` mein application code nahi, sirf Python venv aur requirements thay. GitHub download mein poora reviewed application source hai, venv/private database/.env nahi. Isliye source ZIP chhoti hai.
+
 29 October 2026 ko doosra review mukammal hua. Yeh ZIP pehle wali reviewed ZIP ki updated replacement hai.
 
 - Logout/account switch ke baad puranay admin/customer ka data screen par rehne ka bug fix. Doosray browser tab mein account change ho to bhi purana data clear hota hai.
@@ -9,7 +13,7 @@
 - Short skills, matching/risk filters, price rounding, chat delivery status aur private database permissions fix kiye.
 - Healthcheck custom port aur database outage ko sahi handle karta hai.
 
-**Verification:** 217 tests aur 12 subtests pass (latest startup/login/diagnostic patch); 13 Chromium desktop/mobile flows; Docker aur actual PostgreSQL checks pass. Kisi asli account par bid ya chat message nahi bheja gaya.
+**Verification:** 222 tests aur 19 subtests pass; latest Chromium mein5 AI-settings flows pass. Pehle reviewed v2 par13 desktop/mobile flows aur Docker/PostgreSQL deployment checks pass huay thay; deployment smoke is patch par repeat nahi hua. Kisi asli account par bid ya chat message nahi bheja gaya.
 
 Packages $10 Starter aur $40 Pro hain; owner samait do founder slots free hain. Payment approval manual verification se hoti hai.
 
