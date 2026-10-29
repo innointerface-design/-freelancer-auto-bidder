@@ -228,6 +228,124 @@ class ProviderTests(unittest.TestCase):
         self.assertNotIn(configuration['gemini_key'], str(result))
 
 
+class StructuredProviderDiagnosticTests(unittest.TestCase):
+    def diagnostic(self, provider, status, payload=None, content=None):
+        def handler(request):
+            return httpx.Response(status, json=payload) if content is None else httpx.Response(status, content=content)
+        with mock_client(handler), patch.object(ai, 'resolve_ai_credentials', return_value=credentials()):
+            return ai.test_ai_connection(None, provider)[provider]
+
+    def test_google_errorinfo_codes_have_fixed_safe_hints(self):
+        cases = {
+            'API_KEY_NOT_FOUND': 'credential_rejected', 'API_KEY_INVALID': 'credential_rejected',
+            'API_KEY_EXPIRED': 'credential_rejected', 'SERVICE_DISABLED': 'service_disabled',
+            'API_KEY_SERVICE_BLOCKED': 'credential_restriction', 'API_KEY_HTTP_REFERRER_BLOCKED': 'credential_restriction',
+            'API_KEY_IP_ADDRESS_BLOCKED': 'credential_restriction', 'CONSUMER_INVALID': 'project_configuration',
+            'PROJECT_NOT_FOUND': 'project_configuration', 'BILLING_DISABLED': 'billing_configuration',
+            'ACCESS_TOKEN_SCOPE_INSUFFICIENT': 'oauth_scope',
+        }
+        for reason, kind in cases.items():
+            result = self.diagnostic('gemini', 403, {'error': {
+                'status': 'PERMISSION_DENIED', 'message': 'secret-key https://private.example/?key=secret-key',
+                'details': [{'@type': 'type.googleapis.com/google.rpc.ErrorInfo', 'reason': reason,
+                             'metadata': {'key': 'secret-key', 'consumer': 'private-project-123'}}],
+            }})
+            self.assertEqual(result['provider_status'], 'PERMISSION_DENIED')
+            self.assertEqual(result['provider_reason'], reason)
+            self.assertEqual(result['failure_kind'], kind)
+            self.assertEqual(result['response_format'], 'json')
+            for private in ('secret-key', 'private.example', 'private-project-123'):
+                self.assertNotIn(private, str(result))
+
+    def test_unknown_status_reason_and_metadata_are_never_echoed(self):
+        result = self.diagnostic('gemini', 403, {'error': {
+            'status': 'secret-api-key', 'message': 'Go to https://evil.example/secret-api-key',
+            'details': [{'@type': 'type.googleapis.com/google.rpc.ErrorInfo', 'reason': 'API_KEY_INVALID:secret-api-key',
+                         'metadata': {'reason': 'secret-api-key'}}],
+        }})
+        self.assertNotIn('provider_status', result)
+        self.assertNotIn('provider_reason', result)
+        self.assertEqual(result['failure_kind'], 'access_denied')
+        self.assertNotIn('secret-api-key', str(result))
+        self.assertNotIn('evil.example', str(result))
+
+    def test_remote_message_classification_returns_only_predefined_label_and_hint(self):
+        result = self.diagnostic('gemini', 400, {'error': {'message':
+            'API key not valid: secret-api-key, prompt=private prompt, endpoint=https://private.example'}})
+        self.assertEqual(result['failure_kind'], 'credential_rejected')
+        for private in ('secret-api-key', 'private prompt', 'private.example'):
+            self.assertNotIn(private, str(result))
+
+    def test_openai_codes_types_are_allowlisted_and_401_remains_credential_rejection(self):
+        result = self.diagnostic('openai', 401, {'error': {
+            'type': 'authentication_error', 'code': 'invalid_api_key',
+            'message': 'Incorrect API key: test-openai-secret https://private.example', 'param': 'private input',
+        }})
+        self.assertEqual(result['status_code'], 401)
+        self.assertEqual(result['provider_status'], 'authentication_error')
+        self.assertEqual(result['provider_reason'], 'invalid_api_key')
+        self.assertEqual(result['failure_kind'], 'credential_rejected')
+        for private in ('test-openai-secret', 'private.example', 'private input'):
+            self.assertNotIn(private, str(result))
+        unknown = self.diagnostic('openai', 401, {'error': {'code': 'secret-key', 'type': 'private_type'}})
+        self.assertNotIn('provider_reason', unknown)
+        self.assertNotIn('provider_status', unknown)
+        self.assertEqual(unknown['failure_kind'], 'credential_rejected')
+
+    def test_non_json_error_body_is_classified_without_reflection(self):
+        result = self.diagnostic('gemini', 403, content=b'<html>secret-key https://private.example</html>')
+        self.assertEqual(result['status_code'], 403)
+        self.assertEqual(result['response_format'], 'non_json')
+        self.assertEqual(result['failure_kind'], 'access_denied')
+        self.assertNotIn('secret-key', str(result))
+        self.assertNotIn('private.example', str(result))
+
+    def test_oversized_error_body_is_discarded_and_original_status_preserved(self):
+        body = json.dumps({'error': {'status': 'PERMISSION_DENIED', 'message': 'secret-key ' + 'x' * 70000}}).encode()
+        result = self.diagnostic('gemini', 403, content=body)
+        self.assertEqual(result['status_code'], 403)
+        self.assertEqual(result['response_format'], 'too_large')
+        self.assertNotIn('provider_status', result)
+        self.assertNotIn('secret-key', str(result))
+
+    def test_selected_model_in_catalog_does_not_turn_404_into_model_missing_claim(self):
+        requests = []
+        def handler(request):
+            requests.append(request)
+            if request.method == 'POST':
+                return httpx.Response(404, json={'error': {'status': 'NOT_FOUND', 'message': 'secret-key requested entity not found'}})
+            return httpx.Response(200, json={'models': [{'name': 'models/gemini-2.5-flash', 'supportedGenerationMethods': ['generateContent']}]})
+        with mock_client(handler), patch.object(ai, 'resolve_ai_credentials', return_value=credentials()):
+            result = ai.test_ai_connection(None, 'gemini')['gemini']
+        self.assertEqual(result['status_code'], 404)
+        self.assertEqual(result['provider_status'], 'NOT_FOUND')
+        self.assertEqual(result['failure_kind'], 'generation_access_unconfirmed')
+        self.assertTrue(result['selected_model_listed'])
+        self.assertFalse(result['ok'])
+        self.assertIn('listing does not prove generation access', result['message'])
+        self.assertIn('cause is not yet confirmed', result['message'])
+        self.assertNotIn('Choose', result['message'])
+        self.assertNotIn('Select one', result['model_discovery_message'])
+        self.assertNotIn('secret-key', str(result))
+        self.assertEqual([request.method for request in requests], ['POST', 'GET'])
+
+    def test_google_key_not_found_reason_on_404_is_not_recast_as_missing_model(self):
+        def handler(request):
+            if request.method == 'POST':
+                return httpx.Response(404, json={'error': {'status': 'NOT_FOUND', 'details': [{
+                    '@type': 'type.googleapis.com/google.rpc.ErrorInfo', 'reason': 'API_KEY_NOT_FOUND',
+                }]}})
+            return httpx.Response(200, json={'models': [{'name': 'models/gemini-2.5-flash', 'supportedGenerationMethods': ['generateContent']}]})
+        with mock_client(handler), patch.object(ai, 'resolve_ai_credentials', return_value=credentials()):
+            result = ai.test_ai_connection(None, 'gemini')['gemini']
+        self.assertEqual(result['status_code'], 404)
+        self.assertEqual(result['provider_reason'], 'API_KEY_NOT_FOUND')
+        self.assertEqual(result['failure_kind'], 'credential_rejected')
+        self.assertTrue(result['selected_model_listed'])
+        self.assertIn('not evidence that the selected model is missing', result['message'])
+        self.assertNotIn('Choose', result['message'])
+
+
 class GeminiDiscoveryTests(unittest.TestCase):
     @staticmethod
     def model(name, methods=None):
@@ -255,7 +373,8 @@ class GeminiDiscoveryTests(unittest.TestCase):
         self.assertEqual(result['model'], credentials()['gemini_model'])
         self.assertEqual(result['available_models'], ['gemini-supported'])
         self.assertTrue(result['model_discovery_complete'])
-        self.assertIn('Choose an available model', result['message'])
+        self.assertIn('not returned in the catalog', result['message'])
+        self.assertFalse(result['selected_model_listed'])
         self.assertEqual([r.method for r in requests], ['POST', 'GET'])
 
     def test_listing_uses_explicit_oauth_and_pages_without_key_in_url(self):

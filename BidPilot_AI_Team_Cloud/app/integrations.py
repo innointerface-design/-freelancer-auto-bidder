@@ -158,10 +158,14 @@ def resolve_ai_credentials(u=None):
 class AIProviderError(Exception):
     """Safe diagnostics: messages never include API keys, URLs, prompts or remote bodies."""
 
-    def __init__(self, message, retry_after=60, *, status_code=None):
+    def __init__(self, message, retry_after=60, *, status_code=None, provider_status=None, provider_reason=None, failure_kind=None, response_format=None):
         super().__init__(message)
         self.retry_after = max(30, min(int(retry_after), 900))
         self.status_code = status_code
+        self.provider_status = provider_status
+        self.provider_reason = provider_reason
+        self.failure_kind = failure_kind
+        self.response_format = response_format
 
 
 def _credential(api_key):
@@ -170,6 +174,118 @@ def _credential(api_key):
         raise AIProviderError('Missing or invalid API credential. Save a key from your provider dashboard')
     # No prefix guessing: keys and OAuth access tokens are different credential types.
     return value
+
+
+_GOOGLE_STATUSES = frozenset((
+    'CANCELLED', 'UNKNOWN', 'INVALID_ARGUMENT', 'DEADLINE_EXCEEDED', 'NOT_FOUND',
+    'ALREADY_EXISTS', 'PERMISSION_DENIED', 'RESOURCE_EXHAUSTED', 'FAILED_PRECONDITION',
+    'ABORTED', 'OUT_OF_RANGE', 'UNIMPLEMENTED', 'INTERNAL', 'UNAVAILABLE', 'DATA_LOSS', 'UNAUTHENTICATED',
+))
+_GOOGLE_REASONS = {
+    'API_KEY_INVALID': 'credential_rejected', 'API_KEY_NOT_FOUND': 'credential_rejected',
+    'API_KEY_EXPIRED': 'credential_rejected', 'CREDENTIALS_MISSING': 'credential_rejected',
+    'ACCESS_TOKEN_EXPIRED': 'credential_rejected', 'ACCESS_TOKEN_INVALID': 'credential_rejected',
+    'SERVICE_DISABLED': 'service_disabled', 'CONSUMER_INVALID': 'project_configuration',
+    'PROJECT_NOT_FOUND': 'project_configuration', 'PROJECT_INVALID': 'project_configuration',
+    'BILLING_DISABLED': 'billing_configuration', 'BILLING_NOT_ACTIVE': 'billing_configuration',
+    'ACCESS_TOKEN_SCOPE_INSUFFICIENT': 'oauth_scope',
+    'API_KEY_SERVICE_BLOCKED': 'credential_restriction',
+    'API_KEY_HTTP_REFERRER_BLOCKED': 'credential_restriction',
+    'API_KEY_IP_ADDRESS_BLOCKED': 'credential_restriction',
+    'API_KEY_ANDROID_APP_BLOCKED': 'credential_restriction',
+    'API_KEY_IOS_APP_BLOCKED': 'credential_restriction',
+    'RATE_LIMIT_EXCEEDED': 'quota_or_rate_limit', 'QUOTA_EXCEEDED': 'quota_or_rate_limit',
+}
+_OPENAI_TYPES = frozenset((
+    'invalid_request_error', 'authentication_error', 'permission_error', 'rate_limit_error',
+    'server_error', 'insufficient_quota', 'tokens', 'requests',
+))
+_OPENAI_CODES = {
+    'invalid_api_key': 'credential_rejected', 'incorrect_api_key': 'credential_rejected',
+    'invalid_authentication': 'credential_rejected', 'account_deactivated': 'credential_rejected',
+    'organization_deactivated': 'credential_rejected', 'permission_denied': 'access_denied',
+    'model_not_found': 'generation_access_unconfirmed', 'insufficient_quota': 'quota_or_rate_limit',
+    'rate_limit_exceeded': 'quota_or_rate_limit', 'billing_hard_limit_reached': 'billing_configuration',
+    'billing_not_active': 'billing_configuration',
+    'unsupported_country_region_territory': 'access_denied',
+}
+_FAILURE_HINTS = {
+    'credential_rejected': 'Credential rejected or expired; replace or verify it in the provider dashboard. This is not evidence that the selected model is missing.',
+    'credential_restriction': 'The credential restrictions block this request; check allowed API services, server IP addresses and application restrictions in the Google project.',
+    'service_disabled': 'Enable the Gemini API service in the Google project that owns this credential, then test again.',
+    'project_configuration': 'Check that the credential belongs to the intended Google project and that the project exists and is enabled.',
+    'billing_configuration': 'Check the provider account or project billing configuration and billing limits.',
+    'oauth_scope': 'The OAuth access token lacks a required scope; obtain the correct authorized scope without changing authentication modes automatically.',
+    'access_denied': 'Access denied; check credential permissions, API enablement, project settings and generation access.',
+    'quota_or_rate_limit': 'Rate limit or quota reached; check billing and usage limits, then retry later.',
+    'generation_access_unconfirmed': 'The requested generation resource was not found. Check the credential, project, API endpoint and generation permissions; the cause is not yet confirmed.',
+    'invalid_request': 'Request rejected; verify provider configuration, credential type and supported request parameters.',
+    'provider_unavailable': 'Provider temporarily unavailable; check provider status and server configuration.',
+}
+
+
+def _read_error_json(response):
+    """Inspect at most 64 KiB; remote bodies never become diagnostic output."""
+    try:
+        chunks, size = [], 0
+        for chunk in response.iter_bytes():
+            size += len(chunk)
+            if size > 65_536:
+                return {}, 'too_large'
+            chunks.append(chunk)
+        data = json.loads(b''.join(chunks))
+        return (data if isinstance(data, dict) else {}), 'json'
+    except httpx.HTTPError:
+        return {}, 'unreadable'
+    except (ValueError, UnicodeError):
+        return {}, 'non_json'
+
+
+def _provider_http_error(provider, status, data, response_format=None):
+    error = data.get('error') if isinstance(data, dict) else None
+    error = error if isinstance(error, dict) else {}
+    provider_status = provider_reason = None
+    kind = None
+    if provider == 'Gemini':
+        candidate = error.get('status')
+        if isinstance(candidate, str) and candidate in _GOOGLE_STATUSES:
+            provider_status = candidate
+        details = error.get('details')
+        for item in details[:32] if isinstance(details, list) else []:
+            if not isinstance(item, dict) or item.get('@type') != 'type.googleapis.com/google.rpc.ErrorInfo':
+                continue
+            candidate = item.get('reason')
+            if isinstance(candidate, str) and candidate in _GOOGLE_REASONS:
+                provider_reason = candidate
+                kind = _GOOGLE_REASONS[candidate]
+                break
+        if kind is None:
+            kind = {'UNAUTHENTICATED': 'credential_rejected', 'PERMISSION_DENIED': 'access_denied',
+                    'RESOURCE_EXHAUSTED': 'quota_or_rate_limit'}.get(provider_status)
+    elif provider == 'OpenAI':
+        candidate = error.get('type')
+        if isinstance(candidate, str) and candidate in _OPENAI_TYPES:
+            provider_status = candidate
+        candidate = error.get('code')
+        if isinstance(candidate, str) and candidate in _OPENAI_CODES:
+            provider_reason = candidate
+            kind = _OPENAI_CODES[candidate]
+    # A narrowly matched remote phrase may aid classification, but only a fixed
+    # hint is returned. Never interpolate remote text, metadata, IDs or URLs.
+    remote_message = error.get('message')
+    if kind is None and isinstance(remote_message, str):
+        text = remote_message[:4096].lower()
+        if any(phrase in text for phrase in ('api key not found', 'api key not valid', 'invalid api key', 'api key expired', 'incorrect api key')):
+            kind = 'credential_rejected'
+    if status == 401:
+        kind = 'credential_rejected'
+    kind = kind or {400: 'invalid_request', 403: 'access_denied', 404: 'generation_access_unconfirmed',
+                    429: 'quota_or_rate_limit'}.get(status, 'provider_unavailable')
+    return AIProviderError(
+        f'{provider} HTTP {status}: ' + _FAILURE_HINTS[kind],
+        retry_after=300 if status in (400, 401, 403, 404, 429) else 60,
+        status_code=status, provider_status=provider_status, provider_reason=provider_reason, failure_kind=kind, response_format=response_format,
+    )
 
 
 def _request_json(method, url, headers, payload, provider, *, params=None, timeout=35.0):
@@ -181,14 +297,8 @@ def _request_json(method, url, headers, payload, provider, *, params=None, timeo
             with client.stream(method, url, **arguments) as response:
                 status = response.status_code
                 if not 200 <= status < 300:
-                    detail = {
-                        400: 'Request rejected; verify the credential type, model and provider configuration',
-                        401: 'Credential invalid or expired; replace it in Settings',
-                        403: 'Access denied; check API enablement, permissions and model access',
-                        404: 'Model or endpoint unavailable; select a model supported by this account',
-                        429: 'Rate limit or quota reached; check billing and retry later',
-                    }.get(status, 'Provider temporarily unavailable; check service status and configuration')
-                    raise AIProviderError(f'{provider} HTTP {status}: {detail}', retry_after=300 if status in (400, 401, 403, 404, 429) else 60, status_code=status)
+                    error_data, error_format = _read_error_json(response)
+                    raise _provider_http_error(provider, status, error_data, error_format)
                 chunks, size = [], 0
                 for chunk in response.iter_bytes():
                     size += len(chunk)
@@ -411,12 +521,27 @@ def test_ai_connection(u, provider='both'):
             result = {'ok': False, 'model': model, 'message': str(exc)}
             if exc.status_code is not None:
                 result['status_code'] = exc.status_code
+            for field in ('provider_status', 'provider_reason', 'failure_kind', 'response_format'):
+                if getattr(exc, field, None):
+                    result[field] = getattr(exc, field)
             if name == 'gemini' and exc.status_code == 404:
                 result.update(_discover_gemini_models(creds['gemini_key']))
-                result['message'] = ('Gemini HTTP 404: the selected model is unavailable for this credential or API version. '
-                                     'Choose an available model below and test again.' if result['available_models'] else
-                                     'Gemini HTTP 404: the selected model is unavailable for this credential or API version. '
-                                     'Check the model discovery details and Gemini project access.')
+                selected_id = str(model).removeprefix('models/')
+                result['selected_model_listed'] = selected_id in result['available_models']
+                catalog_note = 'A model catalog listing does not prove generation access.'
+                if result['selected_model_listed']:
+                    result['message'] = str(exc) + (
+                        ' The selected model appears in the model catalog, but listing does not prove generation access. '
+                        'Check the credential, Google project, API endpoint and generation permissions.'
+                    )
+                    if result['model_discovery_complete']:
+                        result['model_discovery_message'] = catalog_note
+                    else:
+                        result['model_discovery_message'] += ' ' + catalog_note
+                else:
+                    result['message'] = str(exc) + ' The selected model was not returned in the catalog pages read. ' + catalog_note
+                    if result['available_models'] and result['model_discovery_complete']:
+                        result['model_discovery_message'] = 'Review the returned model IDs and provider codes before changing configuration. ' + catalog_note
             results[name] = result
         except Exception:
             results[name] = {'ok': False, 'model': model, 'message': 'Unexpected provider response; check model and server configuration'}

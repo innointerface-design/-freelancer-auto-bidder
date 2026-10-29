@@ -153,6 +153,22 @@ vm.runInContext(source,sandbox);
  assert.equal(node('aiKeysForm:gemini_model').value,'saved-gemini-model');
  assert.equal(node('aiKeysForm:openai_model').value,'saved-openai-model');
  assert.equal(node('aiKeysForm:preferred_ai').value,'auto');
+ // A catalog-listed model can still fail generation; preserve the selection and show safe reason codes.
+ sandbox.fetch=async()=>({ok:true,status:200,json:async()=>({results:{gemini:{ok:false,status_code:404,model:'saved-gemini-model',message:'Generation request failed',available_models:['saved-gemini-model','<img src=x onerror=alert(1)>',...Array.from({length:12},(_,i)=>'extra-model-'+i)],selected_model_listed:true,provider_status:'NOT_FOUND<img src=x>',provider_reason:'MODEL_UNAVAILABLE<script>alert(1)</script>',failure_kind:'generation_access<svg onload=alert(1)>',response_format:'non_json<img src=x onerror=alert(1)>',model_discovery_complete:true},openai:{ok:false,status_code:401,model:'saved-openai-model',provider_status:'UNAUTHENTICATED',provider_reason:'INVALID_API_KEY',failure_kind:'authentication'}}})});
+ await vm.runInContext("$('testAiKeysBtn').onclick()",sandbox);
+ const listedDiagnostic=node('aiTestResultBox').innerHTML;
+ assert.match(listedDiagnostic,/Provider code:/);assert.match(listedDiagnostic,/HTTP 404/);assert.match(listedDiagnostic,/HTTP 401/);assert.ok(listedDiagnostic.includes('body: non_json&lt;img'));
+ assert.match(listedDiagnostic,/Catalog availability does not verify generation access/);
+ assert.ok(!listedDiagnostic.includes('Copy a listed model ID'));
+ assert.ok(listedDiagnostic.includes('&lt;img')&&!listedDiagnostic.includes('<img'));
+ assert.ok(listedDiagnostic.includes('&lt;script&gt;')&&!listedDiagnostic.includes('<script>'));
+ assert.ok(listedDiagnostic.includes('&lt;svg')&&!listedDiagnostic.includes('<svg'));
+ assert.ok(listedDiagnostic.includes('<details')&&!listedDiagnostic.includes('<details open'));
+ assert.ok(listedDiagnostic.includes('Showing the first 10 of 14 reported models'));
+ assert.ok(!listedDiagnostic.includes('<li><code>extra-model-11'));
+ assert.match(listedDiagnostic,/Create a new secret API key in your provider dashboard/);
+ assert.equal(node('aiKeysForm:gemini_model').value,'saved-gemini-model');
+ assert.equal(node('aiKeysForm:openai_model').value,'saved-openai-model');
  console.log('Frontend security, account flow and asynchronous race checks passed');
 })().catch(e=>{console.error(e);process.exitCode=1});
 '''

@@ -66,3 +66,9 @@ Purana code login par `Server returned an unreadable response (403)` dikhaye to 
 `Second founder email already belongs to a paid member` par app band hone ka bug fixed hai. Existing paid member ko automatically free/admin banaye baghair startup ab continue hoti hai; generic optional-founder warning aa sakti hai. Free founder plan assign karna ho to admin login ke baad Team & SaaS Admin se karein, jab free slot available ho.
 
 Apni existing .env aur database preserve karein. Repository update aur server restart kafi hai; setup dobara chalane, database delete karne ya encryption key badalne ki zaroorat nahi.
+
+## Wahi API error dobara aaye
+
+Gemini ka selected model catalog mein listed ho aur generation404 phir bhi aaye to baar-baar model names na badlein. Updated test mein **Provider code** ke HTTP/status/reason/kind/body fields milte hain; in codes se key restriction, service/project configuration, ya unknown generation access ko alag samajh sakte hain. Codes unknown hon to exact wajah abhi confirm nahi hui. Raw response ya key share karne ki zaroorat nahi.
+
+OpenAI401 par agar purani saved key hi test ho rahi hai, provider dashboard se **nayi complete secret API key** bana kar app mein Save karein. Key ID ya account password use na karein. Key sirf app/private configuration mein rakhein; chat mein na bhejein. New key ke test ka result dekh kar agla step decide karein.

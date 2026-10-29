@@ -396,14 +396,27 @@ function hasUnsavedAISettings(){
     f.elements.openai_model.value.trim()!==(u.openai_model||'gpt-4.1-mini')||
     f.elements.preferred_ai.value!==(u.preferred_ai||'auto'));
 }
+function providerCodeHTML(result){
+  const values=[];
+  if(Number.isInteger(result.status_code)&&result.status_code>=100&&result.status_code<=599)values.push(`HTTP ${result.status_code}`);
+  for(const [field,label] of [['provider_status','status'],['provider_reason','reason'],['failure_kind','kind'],['response_format','body']]){
+    if(typeof result[field]==='string'&&result[field])values.push(`${label}: ${result[field]}`);
+  }
+  return values.length?`<div class="mt-6"><b>Provider code:</b> <code>${esc(values.join(' · '))}</code></div>`:'';
+}
 function aiDiagnosticsHTML(g,o){
   const models=Array.isArray(g.available_models)?g.available_models.filter(model=>typeof model==='string'):[];
-  const modelList=models.length?`<div class="mt-6"><b>Gemini models reported for this saved key:</b><ul>${models.map(model=>`<li><code>${esc(model)}</code></li>`).join('')}</ul><p>Copy a listed model ID into the Gemini Model field, click Save Gemini &amp; ChatGPT Keys, then Test saved AI keys. No model is selected or changed automatically.</p></div>`:'';
+  const listed=g.selected_model_listed===true;
+  const modelGuidance=listed?'<p>The selected model appears in the catalog. Catalog availability does not verify generation access. Use the Provider code to check the credential, Google project, API endpoint and generation permissions. No model is selected or changed automatically.</p>':models.length?'<p>Copy a listed model ID into the Gemini Model field, click Save Gemini &amp; ChatGPT Keys, then Test saved AI keys. No model is selected or changed automatically.</p>':'';
+  const modelItems=models.slice(0,10).map(model=>`<li><code>${esc(model)}</code></li>`).join('');
+  const more=models.length>10?`<p>Showing the first 10 of ${models.length} reported models.</p>`:'';
+  const modelList=models.length?(listed?`<details class="mt-6"><summary>Gemini model catalog (generation access unverified)</summary><ul>${modelItems}</ul>${more}</details>`:`<div class="mt-6"><b>Gemini models reported for this saved key:</b><ul>${modelItems}</ul>${more}</div>`):'';
   const discovery=g.model_discovery_message?`<div class="mt-6">${esc(g.model_discovery_message)}</div>`:'';
   const partial=g.model_discovery_complete===false&&models.length?'<div class="mt-6">This model list may be incomplete.</div>':'';
   const authentication=Number(o.status_code)===401?'<div class="mt-6">Authentication was rejected. Create a new secret API key in your provider dashboard, save it here, then test the saved key again. For direct OpenAI access, use <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">OpenAI API keys</a>.</div>':'';
-  return `<div><b>Google Gemini (${esc(g.model||'gemini')}):</b> <span class="tag ${g.ok?'green':'orange'}">${g.ok?'TEST PASSED ✓':'NOT VERIFIED'}</span> ${esc(g.message||'')}</div>${modelList}${discovery}${partial}<div class="mt-6"><b>OpenAI ChatGPT (${esc(o.model||'gpt')}):</b> <span class="tag ${o.ok?'green':'orange'}">${o.ok?'TEST PASSED ✓':'NOT VERIFIED'}</span> ${esc(o.message||'')}</div>${authentication}`;
+  return `<div><b>Google Gemini (${esc(g.model||'gemini')}):</b> <span class="tag ${g.ok?'green':'orange'}">${g.ok?'TEST PASSED ✓':'NOT VERIFIED'}</span> ${esc(g.message||'')}</div>${providerCodeHTML(g)}${modelGuidance}${modelList}${discovery}${partial}<div class="mt-6"><b>OpenAI ChatGPT (${esc(o.model||'gpt')}):</b> <span class="tag ${o.ok?'green':'orange'}">${o.ok?'TEST PASSED ✓':'NOT VERIFIED'}</span> ${esc(o.message||'')}</div>${providerCodeHTML(o)}${authentication}`;
 }
+
 if($('testAiKeysBtn')){
   $('testAiKeysBtn').textContent='Test saved AI keys';
   $('testAiKeysBtn').onclick=async()=>{
