@@ -1,0 +1,52 @@
+# BidPilot AI — Ubuntu setup aur zaroori baatein
+
+Poore commands aur production details `README.md` mein hain. Is ZIP mein koi chat wali API key include nahi hai. Jo credentials chat mein share hue thay unhein revoke karke fresh keys banayein; keys sirf private `.env` ya logged-in Settings mein save karein.
+
+## Packages
+
+- **Starter: $10 / 30 din** — 150 bid attempts per billing period. Sending/uncertain attempts bhi quota mein count hotay hain taake retries se limit bypass na ho.
+- **Pro: $40 / 30 din** — monthly app quota nahi; Freelancer ke limits aur aapke hourly/daily controls phir bhi apply hotay hain.
+- **Do founders free** — owner/admin aur optional second founder. `setup_local.py` par emails/passwords set karein. Public signup se koi admin/free access nahi le sakta.
+
+Payment screen mein transaction ID submit karna payment verification nahi hai. Admin apne asli JazzCash/EasyPaisa/bank/Stripe account mein payment confirm karne ke baad approve kare. Pehli approval se 30 din activate hotay hain. Wohi active tier renew karne se expiry mein 30 din add hotay hain; current quota window reset nahi hoti. Tier change par naya 30-day period start hota hai. Automatic recurring payment ya verified Stripe webhook is version mein nahi hai. Public signup par automatic email verification ya password-reset email bhi nahi hai.
+
+## Ubuntu par local test
+
+Yeh commands Ubuntu 24.04 LTS / Python 3.12 ke liye hain. Doosray Ubuntu version par Python 3.12 explicitly select karein ya Docker deployment use karein.
+
+```bash
+sudo apt update
+sudo apt install -y python3 python3-venv
+cd BidPilot_AI_Team_Cloud
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -r requirements-dev.txt
+python setup_local.py
+python -m pytest -q
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+Browser mein `http://127.0.0.1:8000` kholein. Doosray terminal mein isi folder/venv se `python -m app.worker` chalayein. Worker ke baghair automatic scanning nahi hogi.
+
+## Public HTTPS website
+
+Domain ko server par point karein aur Docker Engine + Compose plugin install karein. Fresh production folder mein `python setup_local.py --production` chalayein; apna domain, admin aur optional second-founder credentials dein. Script existing `.env` overwrite nahi karti. Pehle se `.env` ho to usmein production URL/settings privately update karein. Phir:
+
+```bash
+chmod 600 .env
+docker compose up --build -d
+docker compose ps
+curl --fail https://aapka-domain/health
+```
+
+Caddy HTTPS, PostgreSQL persistent storage aur web/worker containers Compose file mein hain. Sirf ports 80/443 public hon; database aur port 8000 expose na karein. `.env` ya `docker compose config` ka output share na karein — usmein secrets hotay hain.
+
+## Freelancer aur AI test
+
+Settings se fresh provider key save karke **Test AI Keys** karein. Freelancer token pehle **Sandbox** environment mein connect karein, identity confirm karein aur apne sandbox project par manual bid test karein. Real token/model/permissions aur server internet access ke baghair live API success confirm nahi ho sakti. Local template proposal ka chalna cloud AI key ke chalne ka proof nahi hai.
+
+Auto-bidding default OFF hai. Sandbox verification ke baad `.env` mein `PLATFORM_AUTOBID_APPROVED=true`, web/worker restart aur user Settings mein Auto-Pilot ON karna hota hai. Auto-chat alag opt-in hai. Real bids/messages Freelancer account par action lete hain; bid caps aur currency carefully set karein. `uncertain` bid ko Freelancer par manually check karein; automatic retry nahi hoti.
+
+## Data aur backup
+
+Passwords hashed aur API tokens encrypted hain, lekin koi app “hacker-proof” guarantee nahi de sakti. HTTPS, private secrets, updated server aur restricted backups zaroori hain. `bash deploy/backup.sh` se DB backup lein aur `.env` ka alag encrypted backup rakhein. `FERNET_KEY` kho gayi ya replace hui to puranay saved tokens decrypt nahi honge. Production se pehle restore drill aur actual payment approval flow test karein. Detailed recovery/update instructions `README.md` mein hain.

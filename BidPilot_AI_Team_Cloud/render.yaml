@@ -1,0 +1,62 @@
+# Optional alternative to the Ubuntu Compose deployment.
+# Set all sync:false values in ONE shared environment group, not separately per service.
+databases:
+  - name: bidpilot-postgres
+    databaseName: bidpilot
+    user: bidpilot
+    plan: basic-256mb
+
+services:
+  - type: web
+    name: bidpilot-team-web
+    runtime: docker
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - fromGroup: bidpilot-shared
+      - key: DATABASE_URL
+        fromDatabase:
+          name: bidpilot-postgres
+          property: connectionString
+      - key: FORWARDED_ALLOW_IPS
+        value: '*'
+
+  - type: worker
+    name: bidpilot-team-scanner
+    runtime: docker
+    plan: starter
+    dockerCommand: python -m app.worker
+    envVars:
+      - fromGroup: bidpilot-shared
+      - key: DATABASE_URL
+        fromDatabase:
+          name: bidpilot-postgres
+          property: connectionString
+
+envVarGroups:
+  - name: bidpilot-shared
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: PUBLIC_URL
+        sync: false
+      - key: SECURE_COOKIES
+        value: 'true'
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: FERNET_KEY
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: SECOND_FOUNDER_EMAIL
+        value: ''
+      - key: SECOND_FOUNDER_PASSWORD
+        value: ''
+      - key: ALLOW_PRODUCTION_CONNECTION
+        value: 'true'
+      - key: PLATFORM_AUTOBID_APPROVED
+        value: 'false'
+      - key: SCAN_SECONDS
+        value: '60'

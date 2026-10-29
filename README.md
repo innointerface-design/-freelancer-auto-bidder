@@ -4,6 +4,20 @@ A Python 3.11+ bidding engine and CLI with a FastAPI web dashboard. It finds rel
 
 The service profile covers short-form video editing; YouTube Shorts, Instagram Reels and TikTok; motion graphics and After Effects; AI video ads and animation; product and promotional videos; Premiere Pro and DaVinci Resolve. This initial version handles active, fixed-price projects. Hourly projects are skipped.
 
+## BidPilot AI Updated v2 — source and ZIP download
+
+The reviewed BidPilot SaaS application is available here:
+
+- [Download the complete updated v2 ZIP](https://github.com/innointerface-design/-freelancer-auto-bidder/raw/refs/heads/main/downloads/BidPilot_AI_Updated_v2.zip)
+- [Application source](BidPilot_AI_Team_Cloud/)
+- [Ubuntu setup in Roman Urdu](BidPilot_AI_Team_Cloud/README_ROMAN_URDU.md)
+- [Second-review fixes in Roman Urdu](BidPilot_AI_Team_Cloud/SECOND_REVIEW_CHANGES_ROMAN_URDU.md)
+- [Review and test results](BidPilot_AI_Team_Cloud/REVIEW_AND_TESTS.md)
+
+BidPilot has $10 Starter and $40 Pro plans, two free founder slots, encrypted saved API tokens, and manual payment verification. The review completed with 125 tests plus 12 subtests, Chromium desktop/mobile flows, and Docker/PostgreSQL checks. Live AI credentials, Freelancer sandbox acceptance, actual payment settlement and public HTTPS still require validation on the target server. No real credentials, customer databases or private `.env` files are included.
+
+For this application, change into `BidPilot_AI_Team_Cloud` and follow its own README and Python 3.12 requirements. Its source and tests are separate from the CLI/dashboard described below. The repository adds a local `pytest.ini` for test isolation when BidPilot is nested in this repository; the downloadable ZIP retains the original reviewed application bytes. GitHub cannot preview ZIP contents: use the download link above, or choose **Download raw file** on the ZIP's GitHub page.
+
 ## Web dashboard quick start
 
 The web application extends the existing engine and retains the CLI. It adds admin login, live API search, skill/country/currency/budget filters, proposal drafting and editing, scoring, bid history, analytics, monitoring controls and schedules. Both controls default to off; the Auto Bidder resets off at every restart, while a previously enabled monitoring preference is retained. The default bidding mode is dry-run.

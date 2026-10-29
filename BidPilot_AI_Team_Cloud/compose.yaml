@@ -1,0 +1,108 @@
+# Production: python setup_local.py --production, then docker compose up --build -d.
+x-app: &app
+  build: .
+  image: bidpilot-local:reviewed
+  env_file: .env
+  environment: &app-env
+    APP_ENV: production
+    SECURE_COOKIES: 'true'
+    PORT: '8000'
+    DATABASE_URL: postgresql+psycopg2://bidpilot:${POSTGRES_PASSWORD:?Generate a private .env first}@db:5432/bidpilot
+    PUBLIC_URL: ${PUBLIC_URL:?Set HTTPS PUBLIC_URL}
+    FORWARDED_ALLOW_IPS: 172.30.0.10
+  read_only: true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  networks: [bidpilot]
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: '3'
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: bidpilot
+      POSTGRES_USER: bidpilot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Generate a private .env first}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U bidpilot -d bidpilot']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    networks: [bidpilot]
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+
+  init:
+    <<: *app
+    command: [python, -c, 'from app.db import init_db; init_db()']
+    healthcheck:
+      disable: true
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: 'no'
+
+  web:
+    <<: *app
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  worker:
+    <<: *app
+    command: [python, -m, app.worker]
+    healthcheck:
+      disable: true
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    environment:
+      SITE_DOMAIN: ${SITE_DOMAIN:?Set your public domain in .env}
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      bidpilot:
+        ipv4_address: 172.30.0.10
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+
+networks:
+  bidpilot:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:

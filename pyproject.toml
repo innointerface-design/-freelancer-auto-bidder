@@ -29,6 +29,8 @@ pythonpath = ["src"]
 
 [tool.ruff]
 line-length = 100
+# BidPilot is a standalone application checked by its own CI job.
+extend-exclude = ["BidPilot_AI_Team_Cloud"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
