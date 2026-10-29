@@ -563,3 +563,44 @@ def test_restart_preserves_paid_member_when_optional_founder_email_conflicts(app
     with sessions() as s:
         u = s.get(db.User, uid)
         assert (u.password_hash, u.role, u.plan_tier, u.subscription_expires, u.gemini_key_cipher) == before
+
+
+def test_saved_openai_secret_roundtrip_reaches_bearer_header_unchanged(app_client, monkeypatch):
+    import httpx
+    from app import integrations
+    c, sessions = app_client
+    monkeypatch.setenv('OPENAI_BASE_URL', 'https://api.openai.com/v1')
+    original_client = httpx.Client
+    old_id = 'key_synthetic_identifier_only_123'
+    new_secret = 'sk-proj-synthetic-secret-for-transport-test-only-456789'
+    observed = []
+    def provider(request):
+        observed.append((str(request.url), request.headers.get('authorization')))
+        if request.headers.get('authorization') == 'Bearer ' + old_id:
+            return httpx.Response(401, json={'error': {'type': 'invalid_request_error', 'code': 'invalid_api_key', 'message': 'Rejected diagnostic credential'}})
+        assert request.headers['authorization'] == 'Bearer ' + new_secret
+        return httpx.Response(200, json={'choices': [{'finish_reason': 'stop', 'message': {'content': 'Connection successful.'}}]})
+    def fake_client(*args, **kwargs):
+        kwargs['transport'] = httpx.MockTransport(provider)
+        kwargs['trust_env'] = False
+        return original_client(*args, **kwargs)
+    monkeypatch.setattr(integrations.httpx, 'Client', fake_client)
+    headers = login(c)
+    # Reproduce the rejected saved identifier, then replace it with a secret value.
+    for secret, success in [(old_id, False), (new_secret, True)]:
+        r = c.post('/api/ai-keys', headers=headers, json={'preferred_ai': 'openai', 'openai_key': secret, 'openai_model': 'gpt-4.1-mini'})
+        assert r.status_code == 200 and secret not in r.text
+        r = c.post('/api/ai-keys/test', headers=headers, json={'provider': 'openai'})
+        assert r.status_code == 200 and secret not in r.text
+        assert r.json()['results']['openai']['ok'] is success
+        if not success:
+            assert r.json()['results']['openai']['status_code'] == 401
+            assert r.json()['results']['openai']['provider_reason'] == 'invalid_api_key'
+        with sessions() as s:
+            owner = s.query(db.User).filter_by(role='admin').one()
+            assert owner.openai_key_cipher != secret
+            assert db.decrypt_secret(owner.openai_key_cipher) == secret
+    assert observed == [
+        ('https://api.openai.com/v1/chat/completions', 'Bearer ' + old_id),
+        ('https://api.openai.com/v1/chat/completions', 'Bearer ' + new_secret),
+    ]

@@ -346,6 +346,57 @@ class StructuredProviderDiagnosticTests(unittest.TestCase):
         self.assertNotIn('Choose', result['message'])
 
 
+class OpenAICredentialIdentifierHintTests(unittest.TestCase):
+    def run_diagnostic(self, key, base, status=401, reason='invalid_api_key'):
+        configuration = credentials(openai_key=key)
+        requests = []
+        def handler(request):
+            requests.append(request)
+            self.assertEqual(request.headers['Authorization'], 'Bearer ' + key)
+            if status == 200:
+                return httpx.Response(200, json={'choices': [{'finish_reason': 'stop', 'message': {'content': 'Connected'}}]})
+            return httpx.Response(status, json={'error': {'type': 'authentication_error', 'code': reason,
+                                                         'message': 'Rejected ' + key + ' at https://private.example'}})
+        with mock_client(handler), patch.object(ai, 'resolve_ai_credentials', return_value=configuration), \
+             patch.dict(os.environ, {'OPENAI_BASE_URL': base}):
+            result = ai.test_ai_connection(None, 'openai')['openai']
+        self.assertEqual(len(requests), 1)
+        self.assertNotIn(key, str(result))
+        self.assertNotIn('private.example', str(result))
+        return result
+
+    def test_official_401_invalid_key_with_key_identifier_shape_gets_contextual_hint(self):
+        for reason in ('invalid_api_key', 'incorrect_api_key'):
+            result = self.run_diagnostic('key_dummy_record_id', 'https://api.openai.com/v1', reason=reason)
+            self.assertEqual(result['credential_hint'], 'possible_key_identifier')
+            self.assertEqual(result['status_code'], 401)
+            self.assertEqual(result['failure_kind'], 'credential_rejected')
+            self.assertIn('may be an API key record ID', result['message'])
+            self.assertIn('full secret value', result['message'])
+
+    def test_key_identifier_prefix_is_not_rejected_when_provider_accepts_it(self):
+        result = self.run_diagnostic('key_accepted_by_provider', 'https://api.openai.com/v1', status=200)
+        self.assertTrue(result['ok'])
+        self.assertNotIn('credential_hint', result)
+
+    def test_custom_provider_401_does_not_get_official_identifier_hint(self):
+        result = self.run_diagnostic('key_custom_provider_secret', 'https://compatible-provider.example/v1')
+        self.assertEqual(result['status_code'], 401)
+        self.assertNotIn('credential_hint', result)
+        self.assertNotIn('record ID', result['message'])
+
+    def test_sk_project_key_rejection_does_not_get_identifier_hint(self):
+        result = self.run_diagnostic('sk-proj-dummy-secret', 'https://api.openai.com/v1')
+        self.assertEqual(result['status_code'], 401)
+        self.assertNotIn('credential_hint', result)
+        self.assertNotIn('record ID', result['message'])
+
+    def test_key_identifier_shape_without_explicit_invalid_key_reason_gets_no_hint(self):
+        result = self.run_diagnostic('key_dummy_record_id', 'https://api.openai.com/v1', reason='permission_denied')
+        self.assertEqual(result['status_code'], 401)
+        self.assertNotIn('credential_hint', result)
+
+
 class GeminiDiscoveryTests(unittest.TestCase):
     @staticmethod
     def model(name, methods=None):

@@ -35,7 +35,7 @@ Second review and subsequent login/API-diagnostic patch completed 29 October 202
 
 | Check | Result |
 | --- | --- |
-| Full automated suite | **186 passed plus 12 subtests**, 35.58 seconds on the latest patch run |
+| Full automated suite | **217 passed plus 12 subtests**, 48.74 seconds on the latest patch run |
 | External API protocol/security cases | Controlled mocks; no real credentials or bids |
 | Chromium desktop/mobile smoke | 13 flows passed (including same-browser owner→member privacy and post-approval plan refresh): owner login, demo proposal/draft, settings, billing, member creation, logout, mobile signup, unpaid local demo, $40 receipt submission, owner approval |
 | Browser errors | No JavaScript page errors, CSP violations, unexpected API failures or external requests; only expected anonymous `/api/me` 401 responses |
@@ -56,7 +56,7 @@ The user's real browser exposed an address mismatch: setup configured PUBLIC_URL
 
 Gemini404 saved-key diagnostics can list generation-supported models using only read-only official GET calls; up to3 bounded pages, no redirects, no automatic model change or alternative generation. OpenAI401 is reported as credential rejection. The UI distinguishes configured from verified, blocks tests of unsaved changes, escapes all model-list content, and gives manual Save→Test instructions.
 
-Current verification: 186 application tests plus12 subtests pass; 340 existing repository tests and Ruff checks pass separately. Actual Chromium checked localhost login while configured127, authenticated CSRF mutation, unsaved-test blocking and mocked Gemini404/OpenAI401 rendering. No unexpected browser errors or external requests. Deployment Docker/PostgreSQL/Caddy results above describe the prior reviewed v2 deployment, not a new production rollout. Neither the user's keys nor their machine were accessed by these tests.
+Current verification: 217 application tests plus12 subtests pass; 340 existing repository tests and Ruff checks pass separately. Actual Chromium checked localhost login while configured127, authenticated CSRF mutation, unsaved-test blocking and mocked Gemini404/OpenAI401 rendering. No unexpected browser errors or external requests. Deployment Docker/PostgreSQL/Caddy results above describe the prior reviewed v2 deployment, not a new production rollout. Neither the user's keys nor their machine were accessed by these tests.
 
 ## Subsequent founder-bootstrap startup repair
 
@@ -69,6 +69,14 @@ Regression tests restart the real app lifespan with the conflicting paid member,
 Repeated Gemini404 results after changing to another listed model did not confirm a missing-model root cause. Diagnostic errors now retain actual HTTP status plus allowlisted Google canonical status/ErrorInfo reason, OpenAI type/code, fixed failure classification and bounded response-format enum. Non-success bodies are inspected up to64KiB; remote raw text, credentials, metadata/IDs, headers, prompts and URLs are never reflected. A catalog-listed selected model no longer produces switch-model advice. Catalog display is collapsed and limited to10 visible entries; no model is chosen automatically. OpenAI401 remains credential rejection.
 
 Eight additional provider regressions cover known project/service/auth restrictions, unconfirmed listed-model404, malicious response bodies, non-JSON/oversized responses and preservation of HTTP status. Frontend regression coverage checks escaped provider codes and body-format values. Latest application run:186 tests plus12 subtests passed; Node syntax, Python compilation and diff checks passed. No user's live key was accessed or transmitted by these tests. This diagnostic patch does not itself validate or repair an invalid credential or grant provider access.
+
+## Saved-key transport verification and standalone checker
+
+Official OpenAI documentation distinguishes the key record ID from the secret value, even where the record's project access is active. The UI now gives a possible-ID explanation only after the official OpenAI host returned401 with an explicit invalid-key reason and the saved value resembles a record ID; prefix alone never blocks a key, and custom providers receive no such assumption.
+
+A full endpoint regression saves an identifier-like value and observes its controlled401, then saves a replacement secret, verifies encrypted storage/decryption and the exact outgoing Bearer header at the official chat endpoint, and observes a controlled success. This verifies value preservation, not real-key validity. Five API hint regressions plus the full saved-key test pass.
+
+A new independent `check_openai_key.py` uses only standard-library HTTPS, fixed official model-list GET, hidden input, no app/config/database imports, no credential persistence, bounded responses and disabled redirects.25 mocked regressions cover auth transport, unexpected/oversized responses,401/403 distinctions, secret redaction, hidden-input failure and no app-state access. Current full application suite:217 tests plus12 subtests passed. User live authentication still requires private testing on their own machine; no actual supplied secret was used here.
 
 ## What still requires your Ubuntu/staging installation
 

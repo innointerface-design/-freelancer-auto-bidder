@@ -169,6 +169,17 @@ vm.runInContext(source,sandbox);
  assert.match(listedDiagnostic,/Create a new secret API key in your provider dashboard/);
  assert.equal(node('aiKeysForm:gemini_model').value,'saved-gemini-model');
  assert.equal(node('aiKeysForm:openai_model').value,'saved-openai-model');
+ // Only the server's specific official-OpenAI authentication hint explains key IDs.
+ assert.ok(!listedDiagnostic.includes('resembles an OpenAI key ID'));
+ const hintedDiagnostic=vm.runInContext("aiDiagnosticsHTML({}, {ok:false,status_code:401,credential_hint:'possible_key_identifier'})",sandbox);
+ assert.match(hintedDiagnostic,/This saved value resembles an OpenAI key ID/);
+ assert.match(hintedDiagnostic,/An active key record is different from its secret value/);
+ assert.match(hintedDiagnostic,/a key ID or masked value cannot authenticate/);
+ assert.match(hintedDiagnostic,/https:\/\/platform.openai.com\/api-keys/);
+ const unknownHint=vm.runInContext("aiDiagnosticsHTML({}, {ok:false,status_code:401,credential_hint:'<img src=x onerror=alert(1)>'})",sandbox);
+ assert.ok(!unknownHint.includes('resembles an OpenAI key ID')&&!unknownHint.includes('<img'));
+ const nonAuthenticationHint=vm.runInContext("aiDiagnosticsHTML({}, {ok:false,status_code:404,credential_hint:'possible_key_identifier'})",sandbox);
+ assert.ok(!nonAuthenticationHint.includes('resembles an OpenAI key ID'));
  console.log('Frontend security, account flow and asynchronous race checks passed');
 })().catch(e=>{console.error(e);process.exitCode=1});
 '''

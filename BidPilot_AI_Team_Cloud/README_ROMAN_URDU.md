@@ -72,3 +72,9 @@ Apni existing .env aur database preserve karein. Repository update aur server re
 Gemini ka selected model catalog mein listed ho aur generation404 phir bhi aaye to baar-baar model names na badlein. Updated test mein **Provider code** ke HTTP/status/reason/kind/body fields milte hain; in codes se key restriction, service/project configuration, ya unknown generation access ko alag samajh sakte hain. Codes unknown hon to exact wajah abhi confirm nahi hui. Raw response ya key share karne ki zaroorat nahi.
 
 OpenAI401 par agar purani saved key hi test ho rahi hai, provider dashboard se **nayi complete secret API key** bana kar app mein Save karein. Key ID ya account password use na karein. Key sirf app/private configuration mein rakhein; chat mein na bhejein. New key ke test ka result dekh kar agla step decide karein.
+
+## OpenAI key active ho lekin invalid_api_key aaye
+
+OpenAI key ka active record/ID aur complete secret value alag hain. API record ka `key_...` ID ya masked value authentication secret ki jagah use nahi hota. App key format ko dekh kar reject nahi karti; official endpoint ke explicit invalid-key401 ke baad hi possible-ID guidance dikhati hai.
+
+App/database se alag check ke liye isi folder mein `.venv/bin/python check_openai_key.py` chalayein. Secret ko hidden prompt mein paste karein; terminal par text nazar nahi aayega aur key save nahi hogi. Checker sirf official OpenAI models endpoint ko GET karta hai. Result401/credential_rejected ho to provider ne is value ko app ke baghair bhi reject kiya. Result200/model_read_access aaye aur app test401 ho to saved value/configuration ko compare karna hoga. Model-list200 chat model access ya billing ka proof nahi hai. Sirf result screenshot share karein, key nahi.

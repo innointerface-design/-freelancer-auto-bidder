@@ -9,7 +9,7 @@
 - Short skills, matching/risk filters, price rounding, chat delivery status aur private database permissions fix kiye.
 - Healthcheck custom port aur database outage ko sahi handle karta hai.
 
-**Verification:** 186 tests aur 12 subtests pass (latest startup/login/diagnostic patch); 13 Chromium desktop/mobile flows; Docker aur actual PostgreSQL checks pass. Kisi asli account par bid ya chat message nahi bheja gaya.
+**Verification:** 217 tests aur 12 subtests pass (latest startup/login/diagnostic patch); 13 Chromium desktop/mobile flows; Docker aur actual PostgreSQL checks pass. Kisi asli account par bid ya chat message nahi bheja gaya.
 
 Packages $10 Starter aur $40 Pro hain; owner samait do founder slots free hain. Payment approval manual verification se hoti hai.
 
@@ -22,3 +22,5 @@ Latest patch mein localhost/127.0.0.1 local login403 fix, readable JSON errors, 
 Startup patch: optional second-founder email existing paid account se match ho to app ab band nahi hoti. Passwords, paid plan aur saved tokens preserve rehte hain; founder access sirf Admin se assign hota hai. Free seats ki concurrent assignment lock aur test-mode dotenv isolation bhi verify ki gayi.
 
 Provider diagnostic patch: Gemini model listed hone par bhi404 ho to ab model change ka andaza nahi lagaya jata. Safe Provider code/status/reason aur body-format dikhte hain. Root cause code se confirm hoga; OpenAI401 par rejected saved key ko replace/verify karna zaroori hai.
+
+Saved-key verification patch: encrypted-save se outgoingBearerheader tak exactvalue preserve hone ka end-to-end regression pass hai. OpenAI recordID-vs-secret guidance ab explicit invalid-key401 ke baad dikhati hai. Independent `check_openai_key.py` se app/config ke baghair private hidden-input test ho sakta hai; total217tests+12subtests pass.

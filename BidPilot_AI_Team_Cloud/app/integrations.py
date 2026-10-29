@@ -524,6 +524,18 @@ def test_ai_connection(u, provider='both'):
             for field in ('provider_status', 'provider_reason', 'failure_kind', 'response_format'):
                 if getattr(exc, field, None):
                     result[field] = getattr(exc, field)
+            # A key-like prefix alone is never rejected. Offer this hint only
+            # after the official OpenAI endpoint explicitly rejects the credential.
+            if (name == 'openai' and exc.status_code == 401
+                    and exc.provider_reason in ('invalid_api_key', 'incorrect_api_key')
+                    and creds['openai_key'].startswith('key_')
+                    and urlsplit(_openai_base_url()).hostname == 'api.openai.com'):
+                result['credential_hint'] = 'possible_key_identifier'
+                result['message'] = (
+                    'OpenAI HTTP 401: this credential was rejected. The saved value may be an API key record ID, '
+                    'which can appear active in the dashboard without being the full API secret. '
+                    'Create a new secret key and copy its full secret value into Settings; do not copy the key record ID.'
+                )
             if name == 'gemini' and exc.status_code == 404:
                 result.update(_discover_gemini_models(creds['gemini_key']))
                 selected_id = str(model).removeprefix('models/')
