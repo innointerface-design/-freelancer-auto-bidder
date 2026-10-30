@@ -2,6 +2,7 @@
 import re, time, math
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 from .scoring_base import RISK_TERMS, parse_number as _parse_number, contains_term, normalized_text, skill_text, country_code, country_codes
+from .advanced import AdvancedConfigError, load_advanced, evaluate_filters, schedule_allows, render_proposal_template
 
 ALIASES = {
     'video editing': ['video editor', 'video editing', 'edit video', 'video production', 'premiere pro', 'davinci resolve', 'capcut', 'final cut'],
@@ -28,10 +29,15 @@ def words(v):
     return list(dict.fromkeys(normalized_text(x) for x in re.split(r'[,;\n]+', str(v or '')) if x.strip()))
 
 
-def score_job(job, skills, countries, excluded_keywords=''):
+def score_job(job, skills, countries, excluded_keywords='', search_fields=None):
     title = normalized_text(job.get('title'))
     description = normalized_text(job.get('description'))
-    text = title + ' ' + description + ' ' + skill_text(job.get('skills'))
+    fields = {'title': title, 'description': description, 'skills': skill_text(job.get('skills'))}
+    selected = set(fields) if search_fields is None else set(search_fields)
+    text = ' '.join(value for field, value in fields.items() if field in selected)
+    # Restrict relevance matching only. Excluding a field must never hide its
+    # scam indicators or an explicitly blocked keyword.
+    risk_text = ' '.join(fields.values())
     user_skills = words(skills)
     matched = []
     for skill in user_skills:
@@ -39,12 +45,12 @@ def score_job(job, skills, countries, excluded_keywords=''):
         if any(contains_term(text, v) for v in variants):
             matched.append(skill)
 
-    quality = sum(2 if any(contains_term(title, v) for v in [s] + ALIASES.get(s, [])) else 1 for s in matched)
+    quality = sum(2 if 'title' in selected and any(contains_term(title, v) for v in [s] + ALIASES.get(s, [])) else 1 for s in matched)
     skill_pts = min(52, quality * 14)
 
     custom_excluded = words(excluded_keywords)
     all_risks = sorted(set(list(RISK_TERMS) + custom_excluded))
-    risks = [x for x in all_risks if contains_term(text, x)]
+    risks = [x for x in all_risks if contains_term(risk_text, x)]
 
     pay = job.get('payment_verified')
     review = parse_number(job.get('client_reviews'))
@@ -112,8 +118,30 @@ def score_job(job, skills, countries, excluded_keywords=''):
     }
 
 
+def score_for_user(job, user):
+    """Score using the same saved search/filter rules displayed and dispatched."""
+    try:
+        config = load_advanced(user)
+        result = score_job(job, user.skills, user.countries, getattr(user, 'excluded_keywords', ''),
+                           search_fields=config.search_fields)
+        blockers = evaluate_filters(job, user, automatic=False)
+    except AdvancedConfigError:
+        return {
+            'score': 0, 'decision': 'Skip', 'matched': [],
+            'reasons': ['Advanced settings are invalid; review and save them again'],
+            'breakdown': dict(skills=0, client=0, budget=0, clarity=0, freshness=0, penalty=0),
+        }
+    if blockers:
+        result['decision'] = 'Skip'
+        result['reasons'].extend(blockers)
+    return result
+
+
 def make_proposal(job, user):
     """Build an editable local template from the user's supplied profile."""
+    configured = render_proposal_template(job, user)
+    if configured is not None:
+        return configured
     title = str(job.get('title') or 'your project').strip()[:180]
     client_name = str(job.get('client_name') or '').strip()[:80]
     greeting = f"Hi {client_name}," if client_name and client_name.lower() not in ('employer', 'client', 'demo employer', 'demo client') else "Hi there,"
@@ -230,7 +258,15 @@ def auto_eligible(job, score, user, conn, platform_gate=True, existing=None, day
     if getattr(user, 'require_country_match', False) and (not allowed_countries or job_country not in allowed_countries):
         causes.append('Client country not in your target list')
 
-    fresh_score = score_job(job, user.skills, user.countries, getattr(user, 'excluded_keywords', ''))
+    try:
+        config = load_advanced(user)
+        causes.extend(evaluate_filters(job, user, automatic=True))
+        if not schedule_allows(config):
+            causes.append('Outside your configured bidding schedule')
+    except AdvancedConfigError:
+        causes.append('Advanced settings are invalid; review and save them again')
+
+    fresh_score = score_for_user(job, user)
     if fresh_score['decision'] == 'Skip':
         causes.append('Project blocked by skill, exclusion, or risk filters')
     numeric_score = parse_number(score)

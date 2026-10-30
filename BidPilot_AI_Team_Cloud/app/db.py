@@ -1,7 +1,7 @@
 import os, json, time, hashlib, hmac, secrets, re, threading, base64, binascii, logging
 from contextlib import contextmanager
 from urllib.parse import urlparse
-from sqlalchemy import create_engine, Column, Integer, Float, String, Boolean, Text, ForeignKey, UniqueConstraint, event, text, inspect, update
+from sqlalchemy import create_engine, Column, Integer, BigInteger, Float, String, Boolean, Text, ForeignKey, UniqueConstraint, event, text, inspect, update
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.exc import IntegrityError
 from cryptography.fernet import Fernet
@@ -182,6 +182,8 @@ class User(Base):
     portfolio = Column(String(500), default='')
     description = Column(Text, default='Professional Video Editor, AI Video Creator & UI/UX Designer delivering high-converting visuals with fast turnaround.')
     proposal_tone = Column(String(40), default='winning_direct')
+    advanced_config = Column(Text, default='{}')
+    freelancer_cooldown_until = Column(BigInteger, default=0)
 
     # Pricing, Milestone & Auto-Chat Settings
     bid_strategy = Column(String(30), default='average')  # minimum, average, maximum, competitive_low
@@ -201,8 +203,8 @@ class User(Base):
     min_score = Column(Integer, default=65)
     min_budget = Column(Float, default=20.0)
     max_bid = Column(Float, default=1500.0)
-    max_daily = Column(Integer, default=50)
-    max_hourly = Column(Integer, default=15)
+    max_daily = Column(Integer, default=10)
+    max_hourly = Column(Integer, default=3)
 
     auto_requested = Column(Boolean, default=False)
     auto_admin_allowed = Column(Boolean, default=True)
@@ -219,6 +221,9 @@ class Connection(Base):
     freelancer_name = Column(String(200), default='')
     last_scan = Column(Integer, default=0)
     last_error = Column(Text, default='')
+    api_cooldown_until = Column(BigInteger, default=0)
+    api_pause_reason = Column(String(40), default='')
+    last_bid_attempt_at = Column(Integer, default=0)
     __table_args__ = (UniqueConstraint('environment', 'freelancer_id', name='uq_freelancer_account_environment'),)
 
 
@@ -383,6 +388,8 @@ def _auto_migrate_sqlite():
             ('openai_model', "VARCHAR(60) DEFAULT 'gpt-4.1-mini'"),
             ('excluded_keywords', "TEXT DEFAULT 'telegram, upfront fee, registration fee, adult, gambling'"),
             ('proposal_tone', "VARCHAR(40) DEFAULT 'winning_direct'"),
+            ('advanced_config', "TEXT DEFAULT '{}'"),
+            ('freelancer_cooldown_until', 'BIGINT DEFAULT 0'),
             ('bid_strategy', "VARCHAR(30) DEFAULT 'average'"),
             ('default_days', 'INTEGER DEFAULT 3'),
             ('milestone_pct', 'INTEGER DEFAULT 100'),
@@ -392,9 +399,14 @@ def _auto_migrate_sqlite():
             ('allow_any_currency', 'BOOLEAN DEFAULT TRUE'),
             ('require_payment_verified', 'BOOLEAN DEFAULT FALSE'),
             ('require_country_match', 'BOOLEAN DEFAULT FALSE'),
-            ('max_hourly', 'INTEGER DEFAULT 15'),
+            ('max_hourly', 'INTEGER DEFAULT 3'),
         ],
         'bids': [('milestone_pct', 'INTEGER DEFAULT 100')],
+        'connections': [
+            ('api_cooldown_until', 'BIGINT DEFAULT 0'),
+            ('api_pause_reason', "VARCHAR(40) DEFAULT ''"),
+            ('last_bid_attempt_at', 'INTEGER DEFAULT 0'),
+        ],
         'payment_requests': [('plan_tier', "VARCHAR(30) DEFAULT 'paid_pro'")],
         'chat_greeted': [('status', "VARCHAR(30) DEFAULT 'unknown'")],
     }
@@ -625,5 +637,8 @@ def public_user(u, connection=None):
         freelancer_name=connection.freelancer_name if connection else '',
         environment=connection.environment if connection else '',
         last_scan=connection.last_scan if connection else 0,
-        last_error=connection.last_error if connection else ''
+        last_error=connection.last_error if connection else '',
+        api_cooldown_until=max(int(getattr(u, 'freelancer_cooldown_until', 0) or 0), int(connection.api_cooldown_until or 0) if connection else 0),
+        api_pause_reason=(connection.api_pause_reason if connection else '') or ('rate_limited' if int(getattr(u, 'freelancer_cooldown_until', 0) or 0) > int(time.time()) else ''),
+        last_bid_attempt_at=connection.last_bid_attempt_at if connection else 0
     )

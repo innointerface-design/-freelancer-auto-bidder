@@ -10,6 +10,7 @@ import httpx
 
 from app import integrations as ai
 from app.freelancer import FreelancerAPI, FreelancerError, normalize_project, unwrap_user
+from app.advanced import AdvancedConfigError
 
 REAL_CLIENT = httpx.Client
 
@@ -29,6 +30,37 @@ class ProviderTests(unittest.TestCase):
     def setUp(self):
         with ai._AI_CIRCUIT_LOCK:
             ai._AI_CIRCUITS.clear()
+
+    def test_configured_keyword_template_avoids_llm_and_preserves_supplied_facts(self):
+        user = SimpleNamespace(name='Tester', skills='Python', portfolio='https://example.test/portfolio',
+                               default_days=4, advanced_config=json.dumps({
+                                   'keyword_templates': [{
+                                       'name': 'Python projects', 'keywords': ['Python'],
+                                       'template': 'Hello {client_name}, I can discuss {project_title}. Portfolio: {portfolio}. Regards, {signature}.',
+                                   }],
+                               }))
+        project = {'title': 'Python dashboard', 'description': 'A small reporting dashboard.', 'client_name': 'Alex'}
+        with patch.object(ai, '_call_llm') as provider:
+            result = ai.ai_proposal(project, user)
+        provider.assert_not_called()
+        self.assertEqual(result, 'Hello Alex, I can discuss Python dashboard. Portfolio: https://example.test/portfolio. Regards, Tester.')
+
+    def test_unmatched_template_rule_keeps_existing_ai_generation_path(self):
+        user = SimpleNamespace(name='Tester', description='', skills='Python', portfolio='', default_days=3,
+                               advanced_config=json.dumps({'keyword_templates': [{
+                                   'name': 'Translation only', 'keywords': ['translation'],
+                                   'template': 'My translation proposal for {project_title}; regards {signature}.',
+                               }]}))
+        with patch.object(ai, '_call_llm', return_value='A controlled generated draft.') as provider:
+            result = ai.ai_proposal({'title': 'Python dashboard'}, user)
+        self.assertEqual(result, 'A controlled generated draft.')
+        provider.assert_called_once()
+
+    def test_invalid_saved_template_never_calls_ai_as_an_implicit_bypass(self):
+        user = SimpleNamespace(advanced_config=json.dumps({'default_template': 'My invalid {unknown_secret} placeholder proposal.'}))
+        with patch.object(ai, '_call_llm') as provider, self.assertRaises(AdvancedConfigError):
+            ai.ai_proposal({'title': 'Python dashboard'}, user)
+        provider.assert_not_called()
 
     def test_gemini_credential_is_header_only_and_thought_not_displayed(self):
         def handler(request):

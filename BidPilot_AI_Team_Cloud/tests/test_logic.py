@@ -1,3 +1,4 @@
+import json
 import math
 import sys
 import time
@@ -5,7 +6,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from app.logic import auto_eligible, make_proposal, price_for, score_job
+from app.logic import auto_eligible, make_proposal, price_for, score_job, score_for_user
+from app.advanced import AdvancedConfigError
 from app.scoring_base import parse_number, job_score, extract_client_requirements
 
 
@@ -66,6 +68,35 @@ class PricingTests(unittest.TestCase):
 
 
 class MatchingRegressionTests(unittest.TestCase):
+    def test_selected_fields_restrict_relevance_and_title_bonus(self):
+        project = job(title='A general developer needed', description='Python automation service', skills=['C#'])
+        self.assertEqual(score_job(project, 'python', '', search_fields=['title'])['matched'], [])
+        self.assertEqual(score_job(project, 'python', '', search_fields=['description'])['matched'], ['python'])
+        skill_only = score_job(job(title='C# developer', description='', skills=['C#']), 'C#', '', search_fields=['skills'])
+        self.assertEqual(skill_only['matched'], ['c#'])
+        self.assertEqual(skill_only['breakdown']['skills'], 14)
+
+    def test_unselected_fields_still_enforce_risk_and_custom_exclusions(self):
+        for phrase, excluded in (('registration fee', ''), ('wire transfer', 'wire transfer')):
+            with self.subTest(phrase=phrase):
+                result = score_job(job(description='Please pay by ' + phrase), 'python', '', excluded,
+                                   search_fields=['title'])
+                self.assertEqual(result['matched'], ['python'])
+                self.assertEqual(result['decision'], 'Skip')
+
+    def test_saved_user_filters_control_displayed_decision(self):
+        filtered = user(advanced_config=json.dumps({'allowed_currencies': ['EUR'], 'min_client_rating': 4.8}))
+        result = score_for_user(job(currency='USD', client_rating=None), filtered)
+        self.assertEqual(result['decision'], 'Skip')
+        self.assertTrue(any('allowed currency list' in reason for reason in result['reasons']))
+        self.assertTrue(any('rating is unknown' in reason for reason in result['reasons']))
+
+    def test_corrupt_saved_rules_fail_closed_without_echoing_configuration(self):
+        result = score_for_user(job(), user(advanced_config='private-corrupt-value'))
+        self.assertEqual(result['decision'], 'Skip')
+        self.assertEqual(result['score'], 0)
+        self.assertNotIn('private-corrupt-value', str(result))
+
     def test_short_technical_skills_are_not_discarded(self):
         for skill in ('Go', 'R', 'C#', 'C++', 'AI'):
             with self.subTest(skill=skill):
@@ -133,6 +164,30 @@ class BaseScoringRegressionTests(unittest.TestCase):
 
 
 class EligibilityTests(unittest.TestCase):
+    def test_manual_review_keyword_keeps_review_available_but_blocks_automation(self):
+        configured = user(advanced_config=json.dumps({'manual_review_keywords': ['automation']}))
+        self.assertNotEqual(score_for_user(job(), configured)['decision'], 'Skip')
+        allowed, reasons, _ = eligible(job(), configured)
+        self.assertFalse(allowed)
+        self.assertTrue(any('manual review' in reason for reason in reasons))
+
+    def test_configured_client_minimums_and_exact_exclusions_block_auto(self):
+        for configuration, project in (
+                ({'min_client_reviews': 3}, job(client_reviews=None)),
+                ({'min_client_rating': 4.5}, job(client_rating=4.1)),
+                ({'excluded_clients': ['client123']}, job(client_username='Client123')),
+                ({'excluded_countries': ['US']}, job()),
+                ({'search_fields': ['skills']}, job(skills=['Translation'])),
+        ):
+            with self.subTest(configuration=configuration):
+                self.assertFalse(eligible(project, user(advanced_config=json.dumps(configuration)))[0])
+
+    def test_bidding_schedule_is_rechecked_before_eligibility(self):
+        with patch('app.logic.schedule_allows', return_value=False):
+            allowed, reasons, _ = eligible(job())
+        self.assertFalse(allowed)
+        self.assertIn('Outside your configured bidding schedule', reasons)
+
     def test_active_matching_job_is_eligible(self):
         allowed, reasons, amount = eligible(job())
         self.assertTrue(allowed, reasons)
@@ -195,6 +250,28 @@ class EligibilityTests(unittest.TestCase):
 
 
 class ProposalTests(unittest.TestCase):
+    def test_matching_keyword_template_is_used_before_default_and_local_generator(self):
+        configured = user(advanced_config=json.dumps({
+            'default_template': 'Default proposal for {project_title}; regards {signature}.',
+            'keyword_templates': [
+                {'name': 'Disabled', 'keywords': ['Python'], 'enabled': False,
+                 'template': 'Disabled proposal for {project_title}; regards {signature}.'},
+                {'name': 'Python work', 'keywords': ['Python', 'automation'], 'match_mode': 'all',
+                 'template': 'Hello {client_name}, I would like to discuss {project_title}. Regards, {signature}.'},
+                {'name': 'Later rule', 'keywords': ['Python'],
+                 'template': 'Later proposal for {project_title}; regards {signature}.'},
+            ],
+        }))
+        proposal = make_proposal(job(client_name='Alex'), configured)
+        self.assertEqual(proposal, 'Hello Alex, I would like to discuss Python automation developer. Regards, Tester.')
+        self.assertNotIn('Default proposal', proposal)
+        self.assertNotIn('Later proposal', proposal)
+
+    def test_invalid_template_configuration_cannot_silently_fall_back(self):
+        configured = user(advanced_config=json.dumps({'default_template': '{signature.__class__} unauthorized template content.'}))
+        with self.assertRaises(AdvancedConfigError):
+            make_proposal(job(), configured)
+
     def test_fallback_uses_profile_without_invented_experience(self):
         for tone in ('consultative', 'agency_pitch', 'friendly_expert', 'winning_direct'):
             proposal = make_proposal(job(), user(proposal_tone=tone, description='I use Python.'))

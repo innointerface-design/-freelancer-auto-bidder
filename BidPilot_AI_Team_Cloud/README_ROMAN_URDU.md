@@ -1,5 +1,7 @@
 # BidPilot AI — Ubuntu setup aur zaroori baatein
 
+**Latest v3:** naye features, AI Help Chat aur current update commands ke liye [V3_FEATURES_ROMAN_URDU.md](V3_FEATURES_ROMAN_URDU.md) dekhein. V3 mein `tzdata` dependency add hui hai; latest requirements install karein.
+
 Poore commands aur production details `README.md` mein hain. Is ZIP mein koi chat wali API key include nahi hai. Jo credentials chat mein share hue thay unhein revoke karke fresh keys banayein; keys sirf private `.env` ya logged-in Settings mein save karein.
 
 ## Packages
@@ -91,9 +93,10 @@ Server wale terminal mein Ctrl+C karein, phir:
 cd ~/bidpilot-v2 &&
 git pull --ff-only &&
 cd BidPilot_AI_Team_Cloud &&
+~/.local/bin/uv pip install --python .venv/bin/python -r requirements.txt &&
 .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Browser mein `http://127.0.0.1:8000` kholein aur Ctrl+Shift+R karein. Is update ke liye dependencies reinstall ya `.env`/database delete karne ki zaroorat nahi. Save/test ke dauran repeat clicks block hain; nayi typed key erase nahi hoti aur purani configuration ka late test result current result ke taur par nahi dikhaya jata.
+Browser mein `http://127.0.0.1:8000` kholein aur Ctrl+Shift+R karein. V3 ke liye latest requirements install karein; `.env` aur database preserve karein. Save/test ke dauran repeat clicks block hain; nayi typed key erase nahi hoti aur purani configuration ka late test result current result ke taur par nahi dikhaya jata.
 
 30 October ko di gayi `BidPilot_AI_All_Freelancer_Bids_Pro_FIXED.zip` mein sirf `venv` aur `requirements.txt` thay; application source nahi tha. GitHub ka `downloads/BidPilot_AI_Updated_v2.zip` complete source package hai. Venv, customer database aur private configuration release mein shamil nahi hain; isi liye ZIP ka size 16 MB se chhota hai.

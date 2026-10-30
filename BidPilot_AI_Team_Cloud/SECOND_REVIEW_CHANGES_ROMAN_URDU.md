@@ -1,5 +1,7 @@
 # Updated v2 — kya theek hua?
 
+Latest v3 features aur current update commands [V3_FEATURES_ROMAN_URDU.md](V3_FEATURES_ROMAN_URDU.md) mein hain. Neeche pehle v2 reviews ki history hai.
+
 30 October update: AI key save/test ke races fix hain; save ke dauran typed replacement key preserve rehti hai, duplicate requests block hoti hain aur late result purani configuration ko current nahi dikhata. Naye Gemini setups `gemini-3.5-flash-lite` use karte hain; existing models preserve rehte hain. Google 2.5 access existing users tak limited rakhta hai. Agar recommended current model catalog mein ho to explicit selection button milta hai; **Save**, phir **Test saved AI keys** karein. Request mein deprecated optional temperature nahi bheja jata. OpenAI ka actual invalid-key401 valid full secret ke baghair fix nahi ho sakta.
 
 Nayi uploaded 16 MB `FIXED.zip` mein application code nahi, sirf Python venv aur requirements thay. GitHub download mein poora reviewed application source hai, venv/private database/.env nahi. Isliye source ZIP chhoti hai.

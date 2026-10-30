@@ -2,12 +2,35 @@
 import json
 import math
 import re
+import time
+from email.utils import parsedate_to_datetime
 from urllib.parse import quote
 import httpx
 
 
 class FreelancerError(Exception):
-    pass
+    """Safe adapter failure; remote bodies and OAuth values are never reflected."""
+    def __init__(self, message, *, status_code=None, retry_after=None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.retry_after = retry_after
+
+
+def _retry_after(value, now=None):
+    """Parse Retry-After without echoing arbitrary headers or shortening the wait."""
+    if not isinstance(value, str) or len(value) > 128:
+        return None
+    value = value.strip()
+    if re.fullmatch(r'[0-9]{1,10}', value):
+        return int(value)
+    try:
+        date = parsedate_to_datetime(value)
+        if date.tzinfo is None:
+            return None
+        seconds = math.ceil(date.timestamp() - (time.time() if now is None else now))
+        return max(0, seconds)
+    except (ValueError, TypeError, OverflowError):
+        return None
 
 
 class FreelancerAPI:
@@ -33,7 +56,10 @@ class FreelancerAPI:
             with httpx.Client(timeout=httpx.Timeout(25.0, connect=8.0), follow_redirects=False) as client:
                 with client.stream(method, url, **kwargs) as response:
                     if not 200 <= response.status_code < 300:
-                        raise FreelancerError(_http_error(response.status_code))
+                        raise FreelancerError(
+                            _http_error(response.status_code), status_code=response.status_code,
+                            retry_after=_retry_after(response.headers.get('Retry-After')) if response.status_code == 429 else None,
+                        )
                     chunks, size = [], 0
                     for chunk in response.iter_bytes():
                         size += len(chunk)
@@ -240,6 +266,7 @@ def normalize_project(raw, user=None, sandbox=False):
         client_reviews=reviews,
         client_rating=rating,
         client_name=user.get('display_name') or user.get('username') or 'Employer',
+        client_username=str(user.get('username') or '').strip()[:100],
         url=url,
         project_status=raw.get('status'),
         frontend_status=raw.get('frontend_project_status'),

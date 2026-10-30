@@ -3,7 +3,8 @@ import os, json, re, ipaddress, hashlib, threading, time
 from urllib.parse import urlsplit
 import httpx
 from .freelancer import FreelancerAPI, FreelancerError, unwrap_user, normalize_project
-from .logic import make_proposal, score_job
+from .logic import make_proposal, score_for_user
+from .advanced import render_proposal_template
 from .scoring_base import extract_client_requirements
 
 
@@ -396,7 +397,7 @@ def _discover_gemini_models(api_key):
     }
 
 
-def _call_gemini(api_key, model, prompt, max_tokens=380):
+def _call_gemini(api_key, model, prompt, max_tokens=380, *, system_prompt=AI_SAFETY_RULES):
     headers = _gemini_headers(api_key)
     model = str(model or '').removeprefix('models/')
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,119}', model):
@@ -410,7 +411,7 @@ def _call_gemini(api_key, model, prompt, max_tokens=380):
     data = _post_json(
         f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent',
         headers,
-        {'systemInstruction': {'parts': [{'text': AI_SAFETY_RULES}]},
+        {'systemInstruction': {'parts': [{'text': system_prompt}]},
          'contents': [{'role': 'user', 'parts': [{'text': prompt}]}], 'generationConfig': generation},
         'Gemini',
     )
@@ -448,7 +449,7 @@ def _openai_base_url():
     return value
 
 
-def _call_openai(api_key, model, prompt, max_tokens=380):
+def _call_openai(api_key, model, prompt, max_tokens=380, *, system_prompt=AI_SAFETY_RULES):
     key = _credential(api_key)
     if not isinstance(model, str) or not 1 <= len(model) <= 120 or any(c.isspace() for c in model):
         raise AIProviderError('Invalid OpenAI model name')
@@ -460,7 +461,7 @@ def _call_openai(api_key, model, prompt, max_tokens=380):
     payload = {
         'model': model,
         'messages': [
-            {'role': 'system', 'content': AI_SAFETY_RULES},
+            {'role': 'system', 'content': system_prompt},
             {'role': 'user', 'content': prompt},
         ],
         token_parameter: max(64, min(int(max_tokens), 4096)),
@@ -578,6 +579,9 @@ def test_ai_connection(u, provider='both'):
 
 def ai_proposal(job, u):
     """Generates a winning Bidman-style AI proposal using Gemini, ChatGPT, or the built-in Deep Smart AI Engine."""
+    configured = render_proposal_template(job, u)
+    if configured is not None:
+        return configured
     profile = {
         'name': str(u.name or '')[:100], 'bio': str(u.description or '')[:450],
         'skills': str(u.skills or '')[:1000], 'portfolio': str(u.portfolio or '')[:500],
@@ -625,7 +629,7 @@ def ai_review(job, u):
     if llm_text:
         return llm_text[:2600]
 
-    sc = score_job(job, u.skills, u.countries, getattr(u, 'excluded_keywords', ''))
+    sc = score_for_user(job, u)
     deliverables = extract_client_requirements(job.get('title', ''), job.get('description', ''))
     matched_str = ', '.join(sc['matched']) if sc['matched'] else 'general creative/technical workflow'
     pay_str = 'Payment is verified' if job.get('payment_verified') is True else 'Payment is unverified (request a milestone upfront)'

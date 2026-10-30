@@ -17,9 +17,10 @@ from .db import (
     AuthSession, LoginAttempt, create_auth_session, get_auth_session, revoke_auth_session, session_digest,
     plan_config, apply_plan, subscription_active
 )
-from .logic import score_job, make_proposal, auto_eligible, price_for
+from .logic import score_job, score_for_user, make_proposal, auto_eligible, price_for
 from .integrations import get_client, scan_for_user, extract_skills, ai_proposal, ai_review, ai_chat_reply, test_ai_connection, resolve_ai_credentials, fetch_live_bids
 from .freelancer import FreelancerAPI, FreelancerError
+from .advanced import AdvancedConfigError, evaluate_filters, load_advanced, schedule_allows
 
 log = logging.getLogger('bidpilot')
 DUMMY_PASSWORD_HASH = hash_password(secrets.token_urlsafe(32))
@@ -187,7 +188,7 @@ class SettingsIn(InputModel):
     min_budget: float = Field(ge=1, le=1000000)
     max_bid: float = Field(ge=1, le=1000000)
     max_daily: int = Field(ge=1, le=200)
-    max_hourly: int = Field(default=15, ge=1, le=60)
+    max_hourly: int = Field(default=3, ge=1, le=60)
     auto_requested: bool = False
 
 
@@ -742,7 +743,7 @@ def settings(x: SettingsIn, uid: int = Depends(mutate)):
         u.updated = int(time.time())
         for j in s.query(Job).filter_by(user_id=uid).all():
             raw = json.loads(j.data)
-            sc = score_job(raw, u.skills, u.countries, u.excluded_keywords)
+            sc = score_for_user(raw, u)
             j.score = sc['score']
             j.decision = sc['decision']
             j.reasons = json.dumps(sc['reasons'])
@@ -757,6 +758,11 @@ def connect(x: ConnectionIn, uid: int = Depends(mutate)):
         raise HTTPException(400, 'Select sandbox or production')
     if x.environment == 'production' and not ALLOW_PROD:
         raise HTTPException(403, 'Set ALLOW_PRODUCTION_CONNECTION=true in .env')
+    with SessionLocal() as s:
+        previous = s.query(Connection).filter_by(user_id=uid).first()
+        user = s.get(User, uid)
+        if max(int(user.freelancer_cooldown_until or 0), int(previous.api_cooldown_until or 0) if previous else 0) > int(time.time()):
+            raise HTTPException(429, 'Wait for the Freelancer API cooldown before reconnecting.')
     try:
         api = FreelancerAPI(x.token, 'https://www.freelancer-sandbox.com' if x.environment == 'sandbox' else 'https://www.freelancer.com')
         identity = api.me()
@@ -766,6 +772,18 @@ def connect(x: ConnectionIn, uid: int = Depends(mutate)):
             raise FreelancerError('Account ID missing from Freelancer response')
         skills = extract_skills(identity, api)
     except FreelancerError as e:
+        if getattr(e, 'status_code', None) == 429:
+            # A first connection has no Connection row yet. Preserve the
+            # provider wait on the user so retry/reconnect cannot bypass it.
+            retry = getattr(e, 'retry_after', None)
+            wait = max(30, int(retry) if isinstance(retry, (int, float)) and math.isfinite(retry) and retry >= 0 else 300)
+            with SessionLocal() as s:
+                lock_user(s, uid)
+                user = s.get(User, uid)
+                user.freelancer_cooldown_until = max(int(user.freelancer_cooldown_until or 0), int(time.time()) + wait)
+                audit(s, uid, 'freelancer_paused', 'rate_limited')
+                s.commit()
+            raise HTTPException(429, 'Freelancer API rate limit reached. Wait for the cooldown before reconnecting.') from None
         raise HTTPException(400, str(e))
     with SessionLocal() as s:
         lock_user(s, uid)
@@ -778,14 +796,19 @@ def connect(x: ConnectionIn, uid: int = Depends(mutate)):
         if not c:
             c = Connection(user_id=uid, token_cipher='')
             s.add(c)
+        account_changed = c.environment != x.environment or c.freelancer_id != str(flid)
         c.token_cipher = encrypt_secret(x.token)
-        if c.environment != x.environment or c.freelancer_id != str(flid):
+        if account_changed:
             s.query(Bid).filter(Bid.user_id == uid, Bid.status.in_(['sending', 'submitted', 'uncertain'])).update({'status': 'uncertain'}, synchronize_session=False)
         c.environment = x.environment
         c.freelancer_id = str(flid)
         c.freelancer_name = name
         c.last_scan = 0
         c.last_error = ''
+        c.api_pause_reason = ''
+        c.api_cooldown_until = 0
+        if account_changed:
+            c.last_bid_attempt_at = 0
         u = s.get(User, uid)
         u.auto_requested = False
         u.auto_chat_greeting = False
@@ -842,7 +865,7 @@ def ingest(s, u, records):
     for raw in records:
         if not raw.get('id'):
             continue
-        score = score_job(raw, u.skills, u.countries, getattr(u, 'excluded_keywords', ''))
+        score = score_for_user(raw, u)
         row = s.query(Job).filter_by(user_id=u.id, remote_id=str(raw['id'])).first()
         if not row:
             row = Job(user_id=u.id, remote_id=str(raw['id']), data='{}')
@@ -860,6 +883,81 @@ def lock_user(s, uid):
     s.execute(update(User).where(User.id == uid).values(lock_version=User.lock_version + 1),
               execution_options={'synchronize_session': False})
     s.expire_all()
+
+
+def require_freelancer_available(connection, user=None):
+    """Shared persisted circuit for scans, bids, chats and live-bid refreshes."""
+    reason = getattr(connection, 'api_pause_reason', '') or ''
+    until = max(int(getattr(connection, 'api_cooldown_until', 0) or 0), int(getattr(user, 'freelancer_cooldown_until', 0) or 0))
+    if until > int(time.time()):
+        raise HTTPException(429, 'Freelancer API cooldown active. Wait until the displayed time before trying again.')
+    if reason and reason != 'rate_limited':
+        messages = {
+            'auth_rejected': 'Freelancer rejected the token. Reconnect with a verified OAuth token.',
+            'access_denied': 'Freelancer denied access. Check account permissions, then reconnect.',
+            'uncertain_result': 'A Freelancer result is uncertain. Check the account manually, then reconnect before continuing.',
+        }
+        raise HTTPException(403, messages.get(reason, 'Freelancer access is paused. Check the account and reconnect.'))
+
+
+def record_freelancer_failure(uid, connection_id, snapshot, error, *, uncertain=False):
+    """Persist a safe failure only for the exact connection that made the call."""
+    status = getattr(error, 'status_code', None)
+    if status not in (401, 403, 429) and not uncertain:
+        return
+    with SessionLocal() as s:
+        lock_user(s, uid)
+        connection = s.get(Connection, connection_id)
+        if not connection or connection.user_id != uid or (connection.environment, connection.freelancer_id, connection.token_cipher) != snapshot:
+            if status == 429:
+                # The request can finish after disconnect/token replacement.
+                # Preserve its provider wait without poisoning the new token's
+                # authentication or connection-specific pause state.
+                retry = getattr(error, 'retry_after', None)
+                wait = max(30, int(retry) if isinstance(retry, (int, float)) and math.isfinite(retry) and retry >= 0 else 300)
+                user = s.get(User, uid)
+                user.freelancer_cooldown_until = max(int(user.freelancer_cooldown_until or 0), int(time.time()) + wait)
+                audit(s, uid, 'freelancer_paused', 'rate_limited')
+                s.commit()
+            return
+        if status == 429:
+            retry = getattr(error, 'retry_after', None)
+            wait = max(30, int(retry) if isinstance(retry, (int, float)) and math.isfinite(retry) and retry >= 0 else 300)
+            connection.api_cooldown_until = max(int(connection.api_cooldown_until or 0), int(time.time()) + wait)
+            user = s.get(User, uid)
+            user.freelancer_cooldown_until = max(int(user.freelancer_cooldown_until or 0), connection.api_cooldown_until)
+            # Never replace a stronger authentication/unknown-result pause.
+            if not connection.api_pause_reason or connection.api_pause_reason == 'rate_limited':
+                connection.api_pause_reason = 'rate_limited'
+        else:
+            connection.api_pause_reason = {401: 'auth_rejected', 403: 'access_denied'}.get(status, 'uncertain_result')
+            connection.api_cooldown_until = 0
+            user = s.get(User, uid)
+            user.auto_requested = False
+            user.auto_chat_greeting = False
+        connection.last_error = {
+            'auth_rejected': 'OAuth token rejected; reconnect required.',
+            'access_denied': 'API access denied; verify permissions and reconnect.',
+            'rate_limited': 'API rate limit reached; waiting for the provider cooldown.',
+            'uncertain_result': 'Unknown send result; check Freelancer manually before reconnecting.',
+        }.get(connection.api_pause_reason, 'Freelancer API paused.')
+        audit(s, uid, 'freelancer_paused', connection.api_pause_reason)
+        s.commit()
+
+
+def require_bid_spacing(s, user, connection):
+    try:
+        advanced = load_advanced(user)
+    except AdvancedConfigError:
+        raise HTTPException(409, 'Advanced settings are invalid. Save valid settings before bidding.') from None
+    now = int(time.time())
+    recent = s.query(Bid.updated).filter(Bid.user_id == user.id, Bid.status.in_(['sending', 'submitted', 'uncertain'])).order_by(Bid.updated.desc()).first()
+    last = max(int(connection.last_bid_attempt_at or 0), int(recent[0]) if recent else 0)
+    if s.query(Bid.id).filter_by(user_id=user.id, status='sending').first():
+        raise HTTPException(429, 'Another bid is being sent. Wait for its result before bidding again.')
+    if last and now < last + advanced.min_bid_interval_seconds:
+        raise HTTPException(429, 'Minimum gap between bids is active; the project remains queued.')
+    return now
 
 
 def require_subscription(s, uid):
@@ -904,6 +1002,7 @@ def reserve_bid(s, uid, job_id, *, draft=None, intent=None, source='manual'):
     c = s.query(Connection).filter_by(user_id=uid).first()
     if not c or raw.get('demo'):
         raise HTTPException(403, 'Connect a Freelancer account and use a live project')
+    require_freelancer_available(c, u)
     if c.environment == 'production' and not ALLOW_PROD:
         raise HTTPException(403, 'Production Freelancer connections are disabled')
     if not re.fullmatch(r'[A-Z]{3}', str(raw.get('currency') or '')) or raw.get('type') not in ('fixed', 'hourly'):
@@ -926,6 +1025,12 @@ def reserve_bid(s, uid, job_id, *, draft=None, intent=None, source='manual'):
         raise HTTPException(400, 'Outside project budget, missing budget, or project closed; scan again')
     if not u.min_budget <= amount <= u.max_bid:
         raise HTTPException(400, 'Bid must respect your configured minimum and maximum amount')
+    try:
+        blocking = evaluate_filters(raw, u, automatic=source == 'auto')
+    except AdvancedConfigError:
+        raise HTTPException(409, 'Advanced settings are invalid. Save valid settings before bidding.') from None
+    if blocking:
+        raise HTTPException(403, 'Project blocked by your configured filters: ' + '; '.join(blocking))
     if source == 'auto':
         allowed, _, expected_amount = auto_eligible(raw, j.score, u, c, PLATFORM_AUTO, b)
         if not allowed:
@@ -933,6 +1038,7 @@ def reserve_bid(s, uid, job_id, *, draft=None, intent=None, source='manual'):
         if expected_amount is None or not math.isclose(amount, expected_amount, abs_tol=1e-9):
             raise HTTPException(409, 'Bid price changed while generating proposal; generate again')
     bid_limits(s, u)
+    attempt_time = require_bid_spacing(s, u, c)
     if not b:
         b = Bid(user_id=uid, job_id=job_id, proposal='', amount=amount)
         s.add(b)
@@ -942,7 +1048,8 @@ def reserve_bid(s, uid, job_id, *, draft=None, intent=None, source='manual'):
         raise HTTPException(400, 'Proposal must contain 30 to 3500 characters')
     nonce = secrets.token_urlsafe(32)
     b.status, b.source, b.intent = 'sending', source, nonce
-    b.updated = int(time.time())
+    b.updated = attempt_time
+    c.last_bid_attempt_at = attempt_time
     audit(s, uid, 'bid_reserved', f'Project #{j.remote_id}; source={source}')
     s.commit()  # Reserve before network I/O; uncertain requests are never auto-retried.
     return b.id, j.remote_id, c.id, c.environment, c.freelancer_id, c.token_cipher, nonce
@@ -973,12 +1080,25 @@ def send_reserved(bid_id, remote_id, connection_id, environment, freelancer_id, 
             reason = 'Project or bid limits changed before dispatch'
         elif b.source == 'auto' and not auto_eligible(raw, j.score, u, c, PLATFORM_AUTO)[0]:
             reason = 'Automation was paused or project eligibility changed'
+        if not reason:
+            try:
+                require_freelancer_available(c, u)
+                if evaluate_filters(raw, u, automatic=b.source == 'auto'):
+                    reason = 'Project filters changed before dispatch'
+            except HTTPException as exc:
+                reason = str(exc.detail)
+            except AdvancedConfigError:
+                reason = 'Advanced settings are invalid'
         if reason:
             # No external request occurred, so cancellation is known and can be reviewed safely.
             b.status, b.intent = 'cancelled', ''
             audit(s, b.user_id, 'bid_cancelled', f'Project #{remote_id}; {reason}')
             s.commit()
             raise HTTPException(409, reason + '; no bid request was sent')
+        # A reservation may wait before dispatch. The gap begins when the
+        # outbound attempt starts, not when its earlier reservation was made.
+        c.last_bid_attempt_at = int(time.time())
+        b.updated = c.last_bid_attempt_at
         s.commit()  # Release DB lock before the external request.
         try:
             snapshot = SimpleNamespace(environment=environment, freelancer_id=freelancer_id, token_cipher=token_cipher)
@@ -986,10 +1106,11 @@ def send_reserved(bid_id, remote_id, connection_id, environment, freelancer_id, 
             remote_bid_id = str(result.get('bid', {}).get('id', '')) if isinstance(result, dict) else ''
             if not remote_bid_id:
                 raise FreelancerError('Bid response missing ID; check Freelancer manually')
-        except Exception:
+        except Exception as exc:
             b.status = 'uncertain'
             audit(s, b.user_id, 'bid_uncertain', f'Project #{remote_id}; check Freelancer manually before any retry')
             s.commit()
+            record_freelancer_failure(b.user_id, connection_id, (environment, freelancer_id, token_cipher), exc, uncertain=True)
             raise HTTPException(502, 'Freelancer result is uncertain. Check your Freelancer account; this app will not retry automatically.')
         b.status, b.remote_bid_id = 'submitted', remote_bid_id
         audit(s, b.user_id, 'bid_submitted', f'Project #{remote_id}')
@@ -1001,13 +1122,41 @@ def run_autobid_cycle(uid):
     if not PLATFORM_AUTO:
         return {'submitted': 0, 'reason': 'Platform auto-bidding disabled'}
     with SessionLocal() as s:
-        jobs = [j.id for j in s.query(Job).filter_by(user_id=uid).order_by(Job.score.desc(), Job.discovered.desc()).limit(100)]
+        try:
+            user = require_subscription(s, uid)
+            advanced = load_advanced(user)
+            if not user.auto_requested or not user.auto_admin_allowed:
+                return {'submitted': 0, 'reason': 'Auto-bidding is paused in settings'}
+            connection = s.query(Connection).filter_by(user_id=uid).first()
+            if not connection:
+                return {'submitted': 0, 'reason': 'Freelancer account not connected'}
+            require_freelancer_available(connection, user)
+            require_bid_spacing(s, user, connection)
+            if not schedule_allows(advanced):
+                return {'submitted': 0, 'reason': 'Outside your configured bidding schedule'}
+        except HTTPException as exc:
+            return {'submitted': 0, 'reason': str(exc.detail)}
+        except AdvancedConfigError:
+            return {'submitted': 0, 'reason': 'Advanced settings are invalid; automatic bidding paused'}
+        order = (Job.discovered.asc(), Job.id.asc()) if advanced.queue_order == 'fifo' else (Job.score.desc(), Job.discovered.asc(), Job.id.asc())
+        final_jobs = s.query(Bid.job_id).filter(Bid.user_id == uid, Bid.status.notin_(['draft', 'ready']))
+        # Filter before collecting IDs. A fixed first-100 window would leave
+        # newer projects stuck behind already-consumed or ineligible records.
+        # Close this read session before any AI generation or reservation write.
+        jobs = [row[0] for row in s.query(Job.id).filter(
+            Job.user_id == uid, Job.id.notin_(final_jobs),
+            Job.decision != 'Skip', Job.score >= int(user.min_score or 65),
+        ).order_by(*order).yield_per(200)]
     count = 0
     for job_id in jobs:
         try:
             with SessionLocal() as s:
                 u = require_subscription(s, uid)
                 c = s.query(Connection).filter_by(user_id=uid).first()
+                if not c:
+                    return {'submitted': count, 'reason': 'Freelancer account not connected'}
+                require_freelancer_available(c, u)
+                require_bid_spacing(s, u, c)
                 j = owned(s, Job, job_id, uid)
                 raw = json.loads(j.data)
                 existing = s.query(Bid).filter_by(user_id=uid, job_id=j.id).first()
@@ -1026,7 +1175,7 @@ def run_autobid_cycle(uid):
             send_reserved(*reservation)
             count += 1
         except HTTPException as exc:
-            if exc.status_code in (401, 403, 429):
+            if exc.status_code in (401, 403, 429, 502):
                 return {'submitted': count, 'reason': str(exc.detail)}
             continue
         except (ValueError, FreelancerError):
@@ -1044,6 +1193,12 @@ def run_autochat_cycle(uid):
             return {'replied': 0}
         if conn.environment == 'production' and not ALLOW_PROD:
             return {'replied': 0}
+        try:
+            require_freelancer_available(conn, u)
+            if not schedule_allows(load_advanced(u)):
+                return {'replied': 0, 'reason': 'Outside your configured automation schedule'}
+        except (HTTPException, AdvancedConfigError):
+            return {'replied': 0, 'reason': 'Freelancer access or advanced configuration is paused'}
         snapshot = (conn.id, conn.environment, conn.freelancer_id, conn.token_cipher)
         try:
             api = get_client(conn, None)
@@ -1051,7 +1206,8 @@ def run_autochat_cycle(uid):
             return {'replied': 0}
     try:
         res = api.list_threads(limit=15)
-    except FreelancerError:
+    except FreelancerError as exc:
+        record_freelancer_failure(uid, snapshot[0], snapshot[1:], exc)
         return {'replied': 0}
     threads = res.get('threads', []) if isinstance(res, dict) else []
     users_map = res.get('users', {}) if isinstance(res, dict) else {}
@@ -1105,6 +1261,12 @@ def run_autochat_cycle(uid):
                     or not current_user.auto_admin_allowed or not current_conn
                     or (current_conn.id, current_conn.environment, current_conn.freelancer_id, current_conn.token_cipher) != snapshot):
                 return {'replied': count}
+            try:
+                require_freelancer_available(current_conn, current_user)
+                if not schedule_allows(load_advanced(current_user)):
+                    return {'replied': count}
+            except (HTTPException, AdvancedConfigError):
+                return {'replied': count}
             record = ChatGreeted(user_id=uid, thread_id=tid, project_id=project_id, client_name=name, reply_text=reply, status='sending')
             s.add(record)
             try:
@@ -1117,9 +1279,12 @@ def run_autochat_cycle(uid):
                 record.status = 'submitted'
                 audit(s, uid, 'auto_chat_replied', f'Thread #{tid}')
                 count += 1
-            except FreelancerError:
+            except FreelancerError as exc:
                 record.status = 'uncertain'
                 audit(s, uid, 'auto_chat_uncertain', f'Thread #{tid}; check Freelancer manually, no automatic retry')
+                s.commit()
+                record_freelancer_failure(uid, snapshot[0], snapshot[1:], exc, uncertain=True)
+                return {'replied': count, 'reason': 'A send failed; automation paused for account review'}
             s.commit()
     return {'replied': count}
 
@@ -1131,6 +1296,7 @@ def perform_scan(uid, force=False):
         c = s.query(Connection).filter_by(user_id=uid).first()
         if not c:
             raise ValueError('Connect your official Freelancer account first in Settings')
+        require_freelancer_available(c, u)
         now = int(time.time())
         if c.last_scan and now - c.last_scan < 25:
             raise ValueError('Please wait 25 seconds between rapid scans')
@@ -1147,6 +1313,7 @@ def perform_scan(uid, force=False):
                 c.last_error = str(exc)[:300]
             audit(s, uid, 'scan_failed', str(exc)[:180])
             s.commit()
+            record_freelancer_failure(uid, connection_id, (snapshot.environment, snapshot.freelancer_id, snapshot.token_cipher), exc)
             raise
         lock_user(s, uid)
         c = s.get(Connection, connection_id)
@@ -1247,8 +1414,12 @@ def proposal(job_id: int, request: Request, uid: int = Depends(mutate)):
         j = owned(s, Job, job_id, uid)
         u = s.get(User, uid)
         job = json.loads(j.data)
+        try:
+            proposal_text = make_proposal(job, u)
+        except AdvancedConfigError:
+            raise HTTPException(400, 'Saved proposal template is invalid for this project. Review your advanced settings.') from None
         return {
-            'proposal': make_proposal(job, u),
+            'proposal': proposal_text,
             'suggested_amount': price_for(job, u),
             'suggested_days': getattr(u, 'default_days', 3) or 3,
             'suggested_milestone': getattr(u, 'milestone_pct', 100) or 100
@@ -1276,8 +1447,12 @@ def proposal_ai(job_id: int, uid: int = Depends(mutate)):
         j = owned(s, Job, job_id, uid)
         u = s.get(User, uid)
         job = json.loads(j.data)
+        try:
+            proposal_text = ai_proposal(job, u)
+        except AdvancedConfigError:
+            raise HTTPException(400, 'Saved proposal template is invalid for this project. Review your advanced settings.') from None
         return {
-            'proposal': ai_proposal(job, u),
+            'proposal': proposal_text,
             'suggested_amount': price_for(job, u),
             'suggested_days': getattr(u, 'default_days', 3) or 3,
             'suggested_milestone': getattr(u, 'milestone_pct', 100) or 100
@@ -1385,10 +1560,15 @@ def get_live_bids(uid: int = Depends(current)):
         conn = s.query(Connection).filter_by(user_id=uid).first()
         if not conn:
             return {'bids': [], 'connected': False, 'message': 'Freelancer account not connected'}
+        require_freelancer_available(conn, u)
         try:
             live = fetch_live_bids(u, conn)
             return {'bids': live, 'connected': True}
         except FreelancerError as e:
+            snapshot = (conn.environment, conn.freelancer_id, conn.token_cipher)
+            connection_id = conn.id
+            s.rollback()
+            record_freelancer_failure(uid, connection_id, snapshot, e)
             raise HTTPException(502, str(e))
 
 @app.get('/api/stats')
@@ -1401,3 +1581,9 @@ def stats(uid: int = Depends(current)):
         auto_sent = s.query(Bid).filter_by(user_id=uid, status='submitted', source='auto').count()
         chat_greeted = s.query(ChatGreeted).filter_by(user_id=uid, status='submitted').count()
         return {'jobs': total, 'strong': strong, 'drafts': drafts, 'submitted': submitted, 'auto_sent': auto_sent, 'chat_greeted': chat_greeted}
+
+
+from .preferences_api import install_preferences_routes
+install_preferences_routes(app, current, mutate)
+from .support import install_support_routes
+install_support_routes(app, current, mutate)

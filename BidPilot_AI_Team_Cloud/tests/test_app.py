@@ -40,6 +40,8 @@ def member(sessions, email='customer@example.test', plan='paid_starter', status=
 
 def live_job(sessions, uid, remote='901', flid='123'):
     with sessions() as s:
+        # These controlled Python bids must match the account's declared skills.
+        s.get(db.User, uid).skills = 'Python'
         if not s.query(db.Connection).filter_by(user_id=uid).first():
             s.add(db.Connection(user_id=uid, token_cipher=db.encrypt_secret('test-token-no-network'), freelancer_id=flid, environment='sandbox'))
         raw = {'id': remote, 'title': 'Python automation', 'description': 'Python backend automation service',
@@ -146,7 +148,10 @@ def test_timeout_stays_uncertain_and_never_retried(app_client, monkeypatch):
     headers = login(c, 'customer@example.test', 'Customer-password-123!')
     r = c.post(f'/api/jobs/{jid}/instant-bid', headers=headers, json=DRAFT)
     assert r.status_code == 502 and 'secret-auth' not in r.text
-    assert c.post(f'/api/jobs/{jid}/instant-bid', headers=headers, json=DRAFT).status_code == 409
+    # The unknown send now pauses every Freelancer action until account review,
+    # in addition to retaining the per-project non-retryable uncertain status.
+    blocked = c.post(f'/api/jobs/{jid}/instant-bid', headers=headers, json=DRAFT)
+    assert blocked.status_code == 403 and 'uncertain' in blocked.text.lower()
     with sessions() as s:
         assert s.query(db.Bid).one().status == 'uncertain'
         assert all('secret-auth' not in a.message for a in s.query(db.Audit))
