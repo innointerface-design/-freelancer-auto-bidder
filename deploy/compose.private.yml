@@ -1,0 +1,33 @@
+# Private (tailnet-only) deployment of existing BidPilot.
+# No public HTTP/HTTPS ports; only Tailscale Serve can reach localhost:8000.
+# Requires Docker Compose >= 2.30 (env_file format: raw).
+services:
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+    image: freelancer-auto-bidder-web:local
+    restart: unless-stopped
+    env_file:
+      - path: /etc/freelancer-web.env
+        format: raw
+    environment:
+      FREELANCER_CONFIG_FILE: /app/config/production.toml
+      FREELANCER_WEB_DATABASE: /app/data/web.sqlite3
+      FREELANCER_WEB_COOKIE_SECURE: "true"
+      # Tailscale Serve terminates HTTPS on the host and reverse proxies to
+      # this loopback-only published port. Do not publish this service publicly.
+      FORWARDED_ALLOW_IPS: "*"
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - bidder_data:/app/data
+      - /etc/freelancer-web.toml:/app/config/production.toml:ro
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+
+volumes:
+  bidder_data:
