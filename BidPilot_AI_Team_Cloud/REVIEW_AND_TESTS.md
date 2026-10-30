@@ -1,4 +1,22 @@
-# BidPilot AI — v3 features and verification
+# BidPilot AI — v4 features and verification
+
+## v4 release — 31 October 2026
+
+Current release verification: **402 application tests passed plus 26 subtests**, 55.80 seconds. The separate repository CLI/dashboard suite passed **340 tests**. Repository Ruff, JavaScript syntax, Python compilation, dependency consistency and diff checks passed. One upstream Starlette TestClient deprecation warning remains. Results under older release headings are historical.
+
+The worker now checks scheduling every second, runs at most four accounts concurrently and records an independent heartbeat every ten seconds. A slow API/AI request for one account no longer serially blocks all other accounts. Background scan intervals are at least 60 seconds and are checked again under the database lock. Pending saved matches are checked between scans without repolling project/chat APIs. Successful scans feed the existing automatic proposal/bid flow immediately; all permission gates, project filters, schedules, bid gaps, quotas and provider waits remain enforced. These intervals are targets, not guarantees of a bid reaching a client within a minute.
+
+Persistent scan claims prevent overlapping account refreshes, expire after a crashed process and reject stale results after connection replacement. Actual successful-poll timestamps are separate from scan-start timestamps. Ctrl+C/SIGTERM stops new scheduled work and signals running automatic paths to stop before further API/AI work or mutation; already-dispatched remote requests can still finish. Tests cover minute-boundary cadence, bounded/fair scheduling, heartbeat during a slow account, cancellation after a read-only fetch and after AI generation, replacement claims, failures and restart recovery. An actual pre-v4 SQLite schema is reconstructed and upgraded twice, preserving password hashes, profile data and encrypted AI/Freelancer credentials.
+
+The authenticated status endpoint performs no remote calls and exposes only the current account's automation metrics. Cross-tab account mismatch is rejected before loading status. Pending counts exclude demo, previous-account/environment, closed, low-score and already-drafted/sent projects; remaining candidates still need final eligibility checks. A live worker heartbeat does not prove a healthy Freelancer poll. A failed latest refresh retains the previous success timestamp while showing the failure separately.
+
+Settings regression fixes preserve edits typed while Save is pending, leave unsaved AI fields intact during basic saves and prevent Save/Restore overlap from re-enabling automation. The original dark/purple theme remains, with responsive live-status cards and clearer narrow-screen status rows. No new general-purpose chatbot was added; the committed v3 app-help feature remains unchanged.
+
+Actual Chromium passed **13 v4 flows** using real local endpoints and synthetic data: status lifecycle, honest scan timestamps, next-refresh countdown, scan leases, API cooldown, failed latest poll, Overview-only non-overlapping polling, settings draft preservation, heartbeat expiry and stale-response/logout privacy. Overview and Settings fit 1440px, 390px and 360px viewports. No JavaScript/CSP errors, external requests or provider calls occurred; expected anonymous `/api/me` 401 responses were the only HTTP errors.
+
+An isolated **PostgreSQL 17 upgrade smoke passed**: the committed v3 schema was initialized, current v4 source added the three connection columns and heartbeat table, and the original encrypted token remained unchanged and decryptable. The worker persisted its heartbeat and scan lease during a controlled scan, ingested a project and reported the correct account status/pending count. A fresh process initialized twice and preserved the token, successful-scan timestamp and heartbeat; persisted API cooldown appeared correctly. The test used cached containers with current source, synthetic credentials and controlled external APIs. Temporary containers, network, database and generated configuration were cleaned up; a new production image was not built.
+
+External API protocols are tested with controlled providers. No supplied live AI key was validated, no real bid/payment was sent and no production website was deployed. Live OAuth permissions, account/bid balance, provider secrets/models and public HTTPS require target-server acceptance. Account restriction cannot be ruled out by app code or request intervals; the permission and platform-limit guidance below still applies. Other Docker results under earlier headings describe those earlier revisions.
 
 ## v3 release — 30 October 2026
 

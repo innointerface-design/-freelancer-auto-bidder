@@ -362,6 +362,56 @@ vm.runInContext(source,sandbox);
  assert.match(node('automationSafetyStatus').textContent,/Open advanced rules/);
  assert.ok(!node('automationSafetyStatus').textContent.includes('Next bid permitted'));
 
+
+ // Basic saves serialize with AI/restore and preserve edits across both forms.
+ vm.runInContext("S.me={id:1,role:'admin',name:'Saved profile name',email:'owner@example.test',subscription_active:true,preferred_ai:'auto',gemini_model:'saved-gemini-model',openai_model:'saved-openai-model',skills:'Python',search_terms:'Python',excluded_keywords:'',countries:'US',portfolio:'',description:'A profile',proposal_tone:'winning_direct',bid_strategy:'average',default_days:3,milestone_pct:100,chat_greeting_template:'',min_score:65,min_budget:20,max_bid:1500,max_daily:10,max_hourly:3,auto_requested:false,auto_chat_greeting:false};A.busy='';A.loading=false;S.aiBusy='';S.basicBusy=false;renderSettings();refresh=async()=>{}",sandbox);
+ const profileBeforeBasic=JSON.parse(vm.runInContext('JSON.stringify(S.me)',sandbox));
+ vm.runInContext("A.restore={format:'bidpilot-settings',version:1,settings:{auto_requested:false,auto_chat_greeting:false},advanced:advancedDefaults()}",sandbox);
+ let finishBasic;const basicRequests=[];
+ sandbox.fetch=async(url,opts)=>{basicRequests.push({url,body:JSON.parse(opts.body)});assert.equal(url,'/api/settings');return new Promise(resolve=>{finishBasic=resolve})};
+ const savingBasic=vm.runInContext("$('settingsForm').onsubmit({preventDefault(){},currentTarget:$('settingsForm')})",sandbox);
+ assert.equal(node('settingsForm:submit').disabled,true);assert.equal(node('aiKeysForm:submit').disabled,true);assert.equal(node('importSettingsBtn').disabled,true);
+ vm.runInContext('renderStatus()',sandbox);
+ assert.equal(node('settingsForm:submit').disabled,true);assert.equal(node('testAiKeysBtn').disabled,true);assert.equal(node('importSettingsBtn').disabled,true);
+ await vm.runInContext("$('settingsForm').onsubmit({preventDefault(){},currentTarget:$('settingsForm')})",sandbox);
+ await vm.runInContext("$('aiKeysForm').onsubmit({preventDefault(){}})",sandbox);
+ await vm.runInContext("$('testAiKeysBtn').onclick()",sandbox);
+ await vm.runInContext("$('importSettingsBtn').onclick()",sandbox);
+ assert.equal(basicRequests.length,1);
+ node('settingsForm:name').value='Newer profile edit';node('settingsForm:max_daily').value='7';node('settingsForm:auto_requested').checked=true;
+ node('aiKeysForm:gemini_model').value='newer-unsaved-gemini-model';node('aiKeysForm:preferred_ai').value='openai';node('aiKeysForm:openai_key').value='SYNTHETIC-UNSAVED-KEY';
+ finishBasic({ok:true,status:200,json:async()=>({user:profileBeforeBasic})});await savingBasic;
+ assert.equal(node('settingsForm:name').value,'Newer profile edit');assert.equal(node('settingsForm:max_daily').value,'7');assert.equal(node('settingsForm:auto_requested').checked,true);
+ assert.equal(node('aiKeysForm:gemini_model').value,'newer-unsaved-gemini-model');assert.equal(node('aiKeysForm:preferred_ai').value,'openai');assert.equal(node('aiKeysForm:openai_key').value,'SYNTHETIC-UNSAVED-KEY');
+ assert.equal(vm.runInContext('S.me.auto_requested',sandbox),false);assert.equal(vm.runInContext('S.basicBusy',sandbox),false);
+ assert.match(node('toast').textContent,/newer edits are still unsaved/);
+ // A restore cannot be followed by an older in-flight Save that enables automation.
+ const restoreRequests=[];let finishRestore;
+ sandbox.fetch=async(url,opts)=>{restoreRequests.push({url,body:JSON.parse(opts.body)});assert.equal(url,'/api/settings/import');return new Promise(resolve=>{finishRestore=resolve})};
+ const restoringPreferences=vm.runInContext("$('importSettingsBtn').onclick()",sandbox);
+ await vm.runInContext("$('settingsForm').onsubmit({preventDefault(){},currentTarget:$('settingsForm')})",sandbox);
+ await vm.runInContext("$('aiKeysForm').onsubmit({preventDefault(){}})",sandbox);
+ assert.equal(restoreRequests.length,1);assert.equal(restoreRequests[0].body.settings.auto_requested,false);
+ finishRestore({ok:true,status:200,json:async()=>({user:profileBeforeBasic,settings:vm.runInContext('advancedDefaults()',sandbox)})});await restoringPreferences;
+ assert.equal(vm.runInContext('S.me.auto_requested',sandbox),false);assert.equal(node('settingsForm:auto_requested').checked,false);
+ // Saving AI preferences must never replace independently edited profile fields.
+ let finishAIProfileSave,aiProfileCalls=0;
+ sandbox.fetch=async(url)=>{aiProfileCalls++;assert.equal(url,'/api/ai-keys');return new Promise(resolve=>{finishAIProfileSave=resolve})};
+ const savingAIProfile=vm.runInContext("$('aiKeysForm').onsubmit({preventDefault(){}})",sandbox);
+ node('settingsForm:name').value='Profile draft during AI save';node('settingsForm:max_hourly').value='2';
+ await vm.runInContext("$('settingsForm').onsubmit({preventDefault(){},currentTarget:$('settingsForm')})",sandbox);
+ await vm.runInContext("$('importSettingsBtn').onclick()",sandbox);
+ assert.equal(aiProfileCalls,1);
+ finishAIProfileSave({ok:true,status:200,json:async()=>({user:profileBeforeBasic,ai_provider:'Gemini configured'})});await savingAIProfile;
+ assert.equal(node('settingsForm:name').value,'Profile draft during AI save');assert.equal(node('settingsForm:max_hourly').value,'2');
+ // Old basic-save responses cannot change a replacement account or unlock it.
+ let finishOldBasic;
+ sandbox.fetch=async()=>new Promise(resolve=>{finishOldBasic=resolve});
+ const oldBasic=vm.runInContext("$('settingsForm').onsubmit({preventDefault(){},currentTarget:$('settingsForm')})",sandbox);
+ vm.runInContext("resetSession();S.me={id:2,role:'member',name:'New current member',email:'new@example.test',subscription_active:false};renderSettings();",sandbox);
+ finishOldBasic({ok:true,status:200,json:async()=>({user:profileBeforeBasic})});await oldBasic;
+ assert.equal(vm.runInContext('S.me.id',sandbox),2);assert.equal(node('settingsForm:name').value,'New current member');assert.equal(vm.runInContext('S.basicBusy',sandbox),false);
+
  console.log('Frontend security, account flow and asynchronous race checks passed');
 })().catch(e=>{console.error(e);process.exitCode=1});
 '''

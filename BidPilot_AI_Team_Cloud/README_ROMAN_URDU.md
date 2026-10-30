@@ -1,6 +1,6 @@
 # BidPilot AI — Ubuntu setup aur zaroori baatein
 
-**Latest v3:** naye features, AI Help Chat aur current update commands ke liye [V3_FEATURES_ROMAN_URDU.md](V3_FEATURES_ROMAN_URDU.md) dekhein. V3 mein `tzdata` dependency add hui hai; latest requirements install karein.
+**Latest v4 — 31 October 2026:** live Freelancer refresh, worker status, automatic bidding timing aur current WSL update commands ke liye [V4_FEATURES_ROMAN_URDU.md](V4_FEATURES_ROMAN_URDU.md) dekhein. Existing dark/purple design aur v3 features barqarar hain. Latest requirements install karein; web aur worker alag processes hain.
 
 Poore commands aur production details `README.md` mein hain. Is ZIP mein koi chat wali API key include nahi hai. Jo credentials chat mein share hue thay unhein revoke karke fresh keys banayein; keys sirf private `.env` ya logged-in Settings mein save karein.
 

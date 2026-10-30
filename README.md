@@ -4,18 +4,19 @@ A Python 3.11+ bidding engine and CLI with a FastAPI web dashboard. It finds rel
 
 The service profile covers short-form video editing; YouTube Shorts, Instagram Reels and TikTok; motion graphics and After Effects; AI video ads and animation; product and promotional videos; Premiere Pro and DaVinci Resolve. This initial version handles active, fixed-price projects. Hourly projects are skipped.
 
-## BidPilot AI Updated v3 — source and ZIP download
+## BidPilot AI Updated v4 — source and ZIP download
 
 The reviewed BidPilot SaaS application is available here:
 
-- [Download the complete updated v3 ZIP](https://github.com/innointerface-design/-freelancer-auto-bidder/raw/refs/heads/main/downloads/BidPilot_AI_Updated_v3.zip)
-- [New v3 features and update instructions](BidPilot_AI_Team_Cloud/V3_FEATURES_ROMAN_URDU.md)
+- [Download the complete updated v4 ZIP](https://github.com/innointerface-design/-freelancer-auto-bidder/raw/refs/heads/main/downloads/BidPilot_AI_Updated_v4.zip)
+- [New v4 features and update instructions](BidPilot_AI_Team_Cloud/V4_FEATURES_ROMAN_URDU.md)
+- [Previous v3 features](BidPilot_AI_Team_Cloud/V3_FEATURES_ROMAN_URDU.md)
 - [Application source](BidPilot_AI_Team_Cloud/)
 - [Ubuntu setup in Roman Urdu](BidPilot_AI_Team_Cloud/README_ROMAN_URDU.md)
 - [Second-review fixes in Roman Urdu](BidPilot_AI_Team_Cloud/SECOND_REVIEW_CHANGES_ROMAN_URDU.md)
 - [Review and test results](BidPilot_AI_Team_Cloud/REVIEW_AND_TESTS.md)
 
-BidPilot has $10 Starter and $40 Pro plans, two free founder slots, encrypted saved API tokens, and manual payment verification. The v3 release passed 370 tests plus 26 subtests and 15 actual Chromium desktop/mobile flows. It adds backend Gemini/OpenAI Help Chat, keyword templates, advanced filters, schedules, paced FIFO processing, persistent API pauses and settings backup/restore. The existing dark/purple design and private configuration are preserved. The old v2 ZIP URL remains a compatible latest-source alias. Deployment verification details are recorded in the review report. Live AI credentials, Freelancer sandbox acceptance, actual payment settlement and public HTTPS still require validation on the target server. No real credentials, customer databases or private `.env` files are included.
+BidPilot has $10 Starter and $40 Pro plans, two free founder slots, encrypted saved API tokens, and manual payment verification. V4 adds a live automation panel, independent worker heartbeat and bounded concurrent account scanning on a 60-second target schedule. Fresh scans feed the existing AI auto-bidding flow immediately; filters, working hours, minimum bid gaps, quotas and API cooldowns still apply. Settings saves preserve newer edits and cannot race a settings restore. The existing dark/purple design, v3 app-help chat and private configuration are preserved. Provider latency can delay a scan or bid beyond a minute; an online server and running worker are required. Verification details are recorded in the review report. Live AI credentials, Freelancer sandbox acceptance, actual payment settlement and public HTTPS still require validation on the target server. No real credentials, customer databases or private `.env` files are included.
 
 For this application, change into `BidPilot_AI_Team_Cloud` and follow its own README and Python 3.12 requirements. Its source and tests are separate from the CLI/dashboard described below. The repository adds a local `pytest.ini` for test isolation when BidPilot is nested in this repository; the downloadable ZIP contains the current standalone application source. GitHub cannot preview ZIP contents: use the download link above, or choose **Download raw file** on the ZIP's GitHub page.
 

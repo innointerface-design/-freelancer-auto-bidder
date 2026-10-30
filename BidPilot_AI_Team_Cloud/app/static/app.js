@@ -1,5 +1,5 @@
 'use strict';
-const $=id=>document.getElementById(id),S={me:null,csrf:'',jobs:[],selected:null,nav:'overview',intent:null,team:[],seen:null,alerts:false,ai_provider:'',payment_methods:{},registering:false,epoch:0,refreshRevision:0,proposalRevision:0,editorRevision:0,bidBusy:false,authBusy:false,aiBusy:'',aiRevision:0};
+const $=id=>document.getElementById(id),S={me:null,csrf:'',jobs:[],selected:null,nav:'overview',intent:null,team:[],seen:null,alerts:false,ai_provider:'',payment_methods:{},registering:false,epoch:0,refreshRevision:0,proposalRevision:0,editorRevision:0,bidBusy:false,authBusy:false,aiBusy:'',aiRevision:0,basicBusy:false,basicRevision:0};
 const A={settings:null,templates:[],dirty:false,busy:'',loading:false,revision:0,loadRevision:0,restoreRevision:0,restore:null};
 const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const usd=j=>{const c=j.currency||'Currency unknown',a=j.budget_min,b=j.budget_max;return a==null&&b==null?`${c} · Budget flexible`:`${c} ${a??'?'}${b!=null?'–'+b:''}${j.type?.includes('hour')?'/hr':''}`};
@@ -20,9 +20,10 @@ function setAuthMode(registering){
   $('loginMsg').textContent='';
 }
 function resetSession(){
-  S.epoch++;S.refreshRevision++;S.proposalRevision++;S.editorRevision++;S.aiRevision++;
-  Object.assign(S,{me:null,csrf:'',jobs:[],selected:null,nav:'overview',intent:null,team:[],seen:null,alerts:false,ai_provider:'',payment_methods:{},bidBusy:false,authBusy:false,aiBusy:''});
+  S.epoch++;S.refreshRevision++;S.proposalRevision++;S.editorRevision++;S.aiRevision++;S.basicRevision++;
+  Object.assign(S,{me:null,csrf:'',jobs:[],selected:null,nav:'overview',intent:null,team:[],seen:null,alerts:false,ai_provider:'',payment_methods:{},bidBusy:false,authBusy:false,aiBusy:'',basicBusy:false});
   window.clearSupportChat?.();
+  window.clearAutomationLive?.();
   document.querySelectorAll('form').forEach(form=>form.reset());
   for(const id of ['teamList','adminPaymentsList','teamOverview','billingSummaryBox','topJobs','jobsTable','proposalsBody','liveBidsBody','activityBody','myPlanBanner','myPaymentsList','paymentMethodsBox','aiKeysBanner','aiTestResultBox','testChatBox','aiReviewBox','connectionBanner','autoStatus','chatStatus','aiStatus','modalNotice','modalTitle','modalDesc','modalMeta','modalTrust','modalReasons','confirmText','confirmProposal','accountName','accountEmail','greeting','avatar','planStatus','connStatus','lastScan','planBadgeTitle','planBadgeDesc','geminiMaskBadge','openaiMaskBadge'])$(id).textContent='';
   for(const id of ['bidProposal','bidAmount','bidDays','bidMilestone','loginEmail','loginPassword','registerName','connectToken','confirmation','jobSearch'])$(id).value='';
@@ -118,8 +119,9 @@ function navigate(view){
 
 function renderStatus(){
   const u=S.me;if(!u)return;
+  window.refreshAutomationLive?.();
   $('connStatus').textContent=u.connected?`@${u.freelancer_name} (${u.environment})`:'Not connected';
-  $('lastScan').textContent=age(u.last_scan);
+  $('lastScan').textContent=age(u.last_scan_success_at);
   const isVip=u.plan_tier==='free_team';
   $('planStatus').textContent=isVip?'Founder (free)':`${planName(u.plan_tier)} ($${planPrice(u.plan_tier)}/mo — ${u.subscription_status})`;
   $('planBadgeTitle').textContent=isVip?'✦ Founder (free)':`✦ ${planName(u.plan_tier)} (${String(u.subscription_status).toUpperCase()})`;
@@ -291,9 +293,8 @@ function renderBasicSettings(){
     if(form.elements[chk])form.elements[chk].checked=!!u[chk];
   }
 }
-function renderSettings(){
+function renderAISettings(){
   if(!S.me)return;
-  renderBasicSettings();
   const u=S.me,aiForm=$('aiKeysForm');
   if(aiForm){
     aiForm.elements.gemini_key.placeholder='Provider-issued Gemini API key (blank keeps saved key)';
@@ -305,7 +306,10 @@ function renderSettings(){
     $('openaiMaskBadge').textContent=u.has_openai_key?`(Saved: ${u.openai_key_masked})`:'(Not set)';
     $('aiKeysBanner').innerHTML=`<b>Configured AI providers (saved settings):</b> ${esc(S.ai_provider)} · Gemini Key: <b>${u.has_gemini_key?esc(u.gemini_key_masked):'Not Set'}</b> · ChatGPT Key: <b>${u.has_openai_key?esc(u.openai_key_masked):'Not Set'}</b>`;
   }
-  renderStatus();
+}
+function renderSettings(){
+  if(!S.me)return;
+  renderBasicSettings();renderAISettings();renderStatus();
 }
 
 // Advanced preferences have a separate lifecycle so refreshing AI/account status
@@ -362,16 +366,16 @@ function readAdvancedSettings(){
   return out;
 }
 function renderAdvancedControls(){
-  const busy=!!A.busy||A.loading;
+  const busy=!!A.busy||A.loading||S.basicBusy||!!S.aiBusy;
   for(const id of ['saveAdvancedSettings','exportSettingsBtn','addKeywordTemplate'])if($(id))$(id).disabled=busy||!S.me;
   if($('importSettingsFile'))$('importSettingsFile').disabled=busy||!S.me;
   if($('importSettingsBtn'))$('importSettingsBtn').disabled=busy||!S.me||!A.restore;
   const basicSubmit=$('settingsForm')?.querySelector?.('button[type="submit"]');
-  if(basicSubmit)basicSubmit.disabled=A.busy==='import';
+  if(basicSubmit)basicSubmit.disabled=!!A.busy||S.basicBusy||!!S.aiBusy;
   renderAIControls();
 }
 async function loadAdvancedSettings(force=false){
-  if(!S.me||A.busy||A.loading||A.dirty||(!force&&A.settings))return;
+  if(!S.me||A.busy||A.loading||S.basicBusy||S.aiBusy||A.dirty||(!force&&A.settings))return;
   const epoch=S.epoch,accountId=S.me.id,revision=A.revision,loadRevision=++A.loadRevision;
   A.loading=true;renderAdvancedControls();
   try{
@@ -417,7 +421,7 @@ async function previewSettingsRestore(file){
   const box=$('settingsRestorePreview');box.textContent='';box.classList.add('hidden');
   if(!file)return;
   try{
-    if(!S.me||A.busy)throw Error('Wait until the current settings action finishes.');
+    if(!S.me||A.busy||S.basicBusy||S.aiBusy)throw Error('Wait until the current settings action finishes.');
     if(file.size>131072)throw Error('Choose a settings backup smaller than 128 KB.');
     if(!/\.json$/i.test(file.name||''))throw Error('Choose a .json settings backup.');
     const data=validateSettingsBackup(JSON.parse(await file.text()));
@@ -439,7 +443,7 @@ if($('advancedSettingsForm')){
   };
   form.addEventListener('input',changed);form.addEventListener('change',changed);
   form.onsubmit=async event=>{
-    event.preventDefault();if(!S.me||A.busy||A.loading)return;
+    event.preventDefault();if(!S.me||A.busy||A.loading||S.basicBusy||S.aiBusy)return;
     let snapshot;try{snapshot=readAdvancedSettings()}catch(error){advancedMessage(error.message,true);return;}
     const epoch=S.epoch,accountId=S.me.id,revision=A.revision;
     A.busy='save';renderAdvancedControls();advancedMessage('Saving advanced rules…');
@@ -454,25 +458,25 @@ if($('advancedSettingsForm')){
     finally{if(epoch===S.epoch){A.busy='';renderAdvancedControls();}}
   };
   $('addKeywordTemplate').onclick=()=>{
-    if(A.busy||A.loading)return;
+    if(A.busy||A.loading||S.basicBusy||S.aiBusy)return;
     if(A.templates.length>=10){advancedMessage('You can save up to 10 keyword templates.',true);return;}
     A.templates.push({name:'',keywords:[],match_mode:'any',template:'',enabled:true});renderKeywordTemplates();markAdvancedDirty();
   };
   $('keywordTemplateList').onclick=event=>{
-    if(A.busy||A.loading)return;
+    if(A.busy||A.loading||S.basicBusy||S.aiBusy)return;
     const remove=event.target.closest?.('[data-template-remove]'),move=event.target.closest?.('[data-template-move]');
     if(remove){const index=Number(remove.dataset.templateRemove);if(Number.isInteger(index)&&index>=0&&index<A.templates.length){A.templates.splice(index,1);renderKeywordTemplates();markAdvancedDirty();}}
     if(move){const index=Number(move.dataset.templateMove);if(Number.isInteger(index)&&index>0&&index<A.templates.length){[A.templates[index-1],A.templates[index]]=[A.templates[index],A.templates[index-1]];renderKeywordTemplates();markAdvancedDirty();}}
   };
   $('exportSettingsBtn').onclick=async()=>{
-    if(!S.me||A.busy||A.loading)return;
+    if(!S.me||A.busy||A.loading||S.basicBusy||S.aiBusy)return;
     const epoch=S.epoch,accountId=S.me.id;A.busy='export';renderAdvancedControls();
     try{const data=validateSettingsBackup(await api('/api/settings/export'));if(epoch!==S.epoch||S.me?.id!==accountId)return;saveSettingsBackupFile(data);advancedMessage('Saved preferences downloaded. Unsaved edits and credentials are not included.');}
     catch(error){if(epoch===S.epoch)advancedMessage(error.message,true)}finally{if(epoch===S.epoch){A.busy='';renderAdvancedControls();}}
   };
   $('importSettingsFile').onchange=()=>previewSettingsRestore($('importSettingsFile').files?.[0]);
   $('importSettingsBtn').onclick=async()=>{
-    if(!S.me||A.busy||A.loading||!A.restore||S.aiBusy)return;
+    if(!S.me||A.busy||A.loading||!A.restore||S.aiBusy||S.basicBusy)return;
     const epoch=S.epoch,accountId=S.me.id,revision=A.revision,snapshot=A.restore,basicBefore=basicSettingsSnapshot();
     A.busy='import';renderAdvancedControls();advancedMessage('Restoring preferences and pausing automation…');
     try{
@@ -586,7 +590,7 @@ function savedAISettings(){
 }
 function renderAIControls(){
   const f=$('aiKeysForm'),submit=f?.querySelector?.('button[type="submit"]');
-  const busy=!!S.aiBusy||A.busy==='import';
+  const busy=!!S.aiBusy||S.basicBusy||!!A.busy;
   if(submit)submit.disabled=busy;
   if($('testAiKeysBtn'))$('testAiKeysBtn').disabled=busy||!S.me?.subscription_active;
 }
@@ -601,9 +605,9 @@ if($('aiKeysForm')){
   f.addEventListener('change',aiSettingsChanged);
   f.onsubmit=async e=>{
     e.preventDefault();
-    if(S.aiBusy||A.busy==='import'||!S.me)return;
+    if(S.aiBusy||S.basicBusy||A.busy||!S.me)return;
     const epoch=S.epoch,accountId=S.me.id,snapshot=aiFormSettings();
-    S.aiBusy='save';S.aiRevision++;renderAIControls();
+    S.aiBusy='save';S.aiRevision++;renderAdvancedControls();
     $('aiTestResultBox').textContent='Saving AI settings…';
     $('aiTestResultBox').classList.remove('hidden');
     try{
@@ -615,7 +619,7 @@ if($('aiKeysForm')){
       const current=aiFormSettings();
       S.refreshRevision++;
       S.me=x.user;S.ai_provider=x.ai_provider;
-      renderSettings();
+      renderAISettings();renderStatus();
       for(const [field,value] of Object.entries(current)){
         if(field==='gemini_key'||field==='openai_key')f.elements[field].value=value===snapshot[field]?'':value;
         else if(field==='clear_gemini'||field==='clear_openai')f.elements[field].checked=value===snapshot[field]?false:value;
@@ -625,7 +629,7 @@ if($('aiKeysForm')){
       $('aiTestResultBox').textContent=pending?'Configuration saved. Newer edits are still unsaved; save them before testing.':'Configuration saved. Click Test saved AI keys to verify these settings.';
       $('aiTestResultBox').classList.remove('hidden');
       notify(pending?'Earlier settings saved. Your newer edits are still unsaved.':'AI keys encrypted and saved. Run a saved-key test to verify access.');
-    }catch(ex){notify(ex.message,true)}finally{if(epoch===S.epoch){S.aiBusy='';renderAIControls();}}
+    }catch(ex){notify(ex.message,true)}finally{if(epoch===S.epoch){S.aiBusy='';renderAdvancedControls();}}
   };
 }
 
@@ -662,7 +666,7 @@ function aiDiagnosticsHTML(g,o){
 if($('testAiKeysBtn')){
   $('testAiKeysBtn').textContent='Test saved AI keys';
   $('testAiKeysBtn').onclick=async()=>{
-    if(S.aiBusy||A.busy==='import'||!S.me)return;
+    if(S.aiBusy||S.basicBusy||A.busy||!S.me)return;
     if(hasUnsavedAISettings()){
       $('aiTestResultBox').textContent='You have unsaved AI key, model, or provider changes. Click Save Gemini & ChatGPT Keys first, then Test saved AI keys. Unsaved credentials have not been tested.';
       $('aiTestResultBox').classList.remove('hidden');
@@ -670,7 +674,7 @@ if($('testAiKeysBtn')){
     }
     const epoch=S.epoch,accountId=S.me.id,revision=++S.aiRevision;
     const snapshot=JSON.stringify(aiFormSettings()),saved=savedAISettings();
-    S.aiBusy='test';renderAIControls();
+    S.aiBusy='test';renderAdvancedControls();
     $('aiTestResultBox').textContent='Testing saved AI keys…';
     $('aiTestResultBox').classList.remove('hidden');
     try{
@@ -689,7 +693,7 @@ if($('testAiKeysBtn')){
         aiSettingsChanged();
         $('aiKeysForm').elements.gemini_model.focus?.();
       };
-    }catch(ex){notify(ex.message,true)}finally{if(epoch===S.epoch){S.aiBusy='';renderAIControls();}}
+    }catch(ex){notify(ex.message,true)}finally{if(epoch===S.epoch){S.aiBusy='';renderAdvancedControls();}}
   };
 }
 
@@ -773,15 +777,32 @@ $('proposalCopy').onclick=async()=>{try{await navigator.clipboard.writeText($('b
 
 $('settingsForm').onsubmit=async e=>{
   e.preventDefault();
-  if(A.busy==='import')return;
-  const form=e.currentTarget,data={};
+  if(S.basicBusy||S.aiBusy||A.busy||!S.me)return;
+  const form=e.currentTarget,data={},snapshot=basicSettingsSnapshot();
+  const epoch=S.epoch,accountId=S.me.id,revision=++S.basicRevision;
   for(const k of ['name','skills','search_terms','excluded_keywords','countries','portfolio','description','proposal_tone','bid_strategy','chat_greeting_template'])data[k]=form.elements[k].value;
   for(const k of ['default_days','milestone_pct','min_score','min_budget','max_bid','max_daily','max_hourly'])data[k]=Number(form.elements[k].value);
   for(const chk of ['auto_chat_greeting','allow_hourly','allow_any_currency','require_payment_verified','require_country_match','auto_requested'])data[chk]=form.elements[chk].checked;
+  S.basicBusy=true;renderAdvancedControls();
   try{
     const x=await post('/api/settings',data);
-    S.me=x.user;renderSettings();notify('Bidman Pro settings, Milestones & Auto-Chat saved!');await refresh();
-  }catch(e){notify(e.message,true)}
+    if(epoch!==S.epoch||S.me?.id!==accountId||revision!==S.basicRevision)return;
+    if(x.user?.id!==accountId){resetSession();window.location.reload();return;}
+    const current=basicSettingsSnapshot();
+    const pending=Object.keys(current).some(field=>current[field]!==snapshot[field]);
+    S.refreshRevision++;S.me=x.user;renderBasicSettings();
+    for(const [field,value] of Object.entries(current)){
+      if(value!==snapshot[field]){
+        if(typeof value==='boolean')form.elements[field].checked=value;
+        else form.elements[field].value=value;
+      }
+    }
+    // A basic save does not modify AI inputs; leave their unsaved edits intact.
+    renderStatus();
+    notify(pending?'Earlier preferences saved. Your newer edits are still unsaved.':'Preferences saved.');
+    await refresh();
+  }catch(error){if(epoch===S.epoch)notify(error.message,true)}
+  finally{if(epoch===S.epoch&&revision===S.basicRevision){S.basicBusy=false;renderAdvancedControls();}}
 };
 
 $('connectForm').onsubmit=async e=>{

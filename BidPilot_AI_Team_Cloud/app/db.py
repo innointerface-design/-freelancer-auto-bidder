@@ -37,7 +37,7 @@ if APP_ENV == 'production':
         raise RuntimeError('Production requires HTTPS PUBLIC_URL and SECURE_COOKIES=true')
 PLATFORM_AUTO = os.getenv('PLATFORM_AUTOBID_APPROVED', 'false').lower() == 'true'
 ALLOW_PROD = os.getenv('ALLOW_PRODUCTION_CONNECTION', 'true').lower() == 'true'
-SCAN_SECONDS = max(30, int(os.getenv('SCAN_SECONDS', '60')))
+SCAN_SECONDS = max(60, int(os.getenv('SCAN_SECONDS', '60')))
 
 engine = create_engine(
     DB,
@@ -220,11 +220,20 @@ class Connection(Base):
     freelancer_id = Column(String(80), nullable=False)
     freelancer_name = Column(String(200), default='')
     last_scan = Column(Integer, default=0)
+    last_scan_success_at = Column(Integer, default=0)
+    scan_claim = Column(String(80), default='')
+    scan_claim_until = Column(Integer, default=0)
     last_error = Column(Text, default='')
     api_cooldown_until = Column(BigInteger, default=0)
     api_pause_reason = Column(String(40), default='')
     last_bid_attempt_at = Column(Integer, default=0)
     __table_args__ = (UniqueConstraint('environment', 'freelancer_id', name='uq_freelancer_account_environment'),)
+
+
+class WorkerHeartbeat(Base):
+    __tablename__ = 'worker_heartbeats'
+    worker_key = Column(String(80), primary_key=True)
+    updated_at = Column(Integer, nullable=False, default=0)
 
 
 class Job(Base):
@@ -406,6 +415,9 @@ def _auto_migrate_sqlite():
             ('api_cooldown_until', 'BIGINT DEFAULT 0'),
             ('api_pause_reason', "VARCHAR(40) DEFAULT ''"),
             ('last_bid_attempt_at', 'INTEGER DEFAULT 0'),
+            ('last_scan_success_at', 'INTEGER DEFAULT 0'),
+            ('scan_claim', "VARCHAR(80) DEFAULT ''"),
+            ('scan_claim_until', 'INTEGER DEFAULT 0'),
         ],
         'payment_requests': [('plan_tier', "VARCHAR(30) DEFAULT 'paid_pro'")],
         'chat_greeted': [('status', "VARCHAR(30) DEFAULT 'unknown'")],
@@ -637,6 +649,8 @@ def public_user(u, connection=None):
         freelancer_name=connection.freelancer_name if connection else '',
         environment=connection.environment if connection else '',
         last_scan=connection.last_scan if connection else 0,
+        last_scan_success_at=connection.last_scan_success_at if connection else 0,
+        scan_in_progress=bool(connection and connection.scan_claim and int(connection.scan_claim_until or 0) > int(time.time())),
         last_error=connection.last_error if connection else '',
         api_cooldown_until=max(int(getattr(u, 'freelancer_cooldown_until', 0) or 0), int(connection.api_cooldown_until or 0) if connection else 0),
         api_pause_reason=(connection.api_pause_reason if connection else '') or ('rate_limited' if int(getattr(u, 'freelancer_cooldown_until', 0) or 0) > int(time.time()) else ''),

@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from .db import (
     SessionLocal, init_db, User, Connection, Job, Bid, ChatGreeted, PaymentRequest, Audit,
-    APP_ENV, SESSION_SECRET, SECURE_COOKIES, PLATFORM_AUTO, ALLOW_PROD,
+    APP_ENV, SESSION_SECRET, SECURE_COOKIES, PLATFORM_AUTO, ALLOW_PROD, SCAN_SECONDS,
     encrypt_secret, audit, public_user, hash_password, verify_password,
     AuthSession, LoginAttempt, create_auth_session, get_auth_session, revoke_auth_session, session_digest,
     plan_config, apply_plan, subscription_active
@@ -804,6 +804,9 @@ def connect(x: ConnectionIn, uid: int = Depends(mutate)):
         c.freelancer_id = str(flid)
         c.freelancer_name = name
         c.last_scan = 0
+        c.last_scan_success_at = 0
+        c.scan_claim = ''
+        c.scan_claim_until = 0
         c.last_error = ''
         c.api_pause_reason = ''
         c.api_cooldown_until = 0
@@ -1055,7 +1058,7 @@ def reserve_bid(s, uid, job_id, *, draft=None, intent=None, source='manual'):
     return b.id, j.remote_id, c.id, c.environment, c.freelancer_id, c.token_cipher, nonce
 
 
-def send_reserved(bid_id, remote_id, connection_id, environment, freelancer_id, token_cipher, nonce):
+def send_reserved(bid_id, remote_id, connection_id, environment, freelancer_id, token_cipher, nonce, *, stop_event=None):
     with SessionLocal() as s:
         b = s.get(Bid, bid_id)
         if not b:
@@ -1070,7 +1073,9 @@ def send_reserved(bid_id, remote_id, connection_id, environment, freelancer_id, 
         j = s.get(Job, b.job_id)
         raw = json.loads(j.data) if j else {}
         reason = ''
-        if not u or not subscription_active(u):
+        if stop_event is not None and stop_event.is_set():
+            reason = 'Worker is stopping'
+        elif not u or not subscription_active(u):
             reason = 'Account or subscription is no longer active'
         elif not c or c.user_id != b.user_id or (c.environment, c.freelancer_id, c.token_cipher) != (environment, freelancer_id, token_cipher):
             reason = 'Freelancer connection changed before dispatch'
@@ -1100,6 +1105,11 @@ def send_reserved(bid_id, remote_id, connection_id, environment, freelancer_id, 
         c.last_bid_attempt_at = int(time.time())
         b.updated = c.last_bid_attempt_at
         s.commit()  # Release DB lock before the external request.
+        if stop_event is not None and stop_event.is_set():
+            b.status = 'cancelled'
+            audit(s, b.user_id, 'bid_cancelled', f'Project #{remote_id}; worker stopped before dispatch')
+            s.commit()
+            raise HTTPException(409, 'Worker is stopping; no bid request was sent')
         try:
             snapshot = SimpleNamespace(environment=environment, freelancer_id=freelancer_id, token_cipher=token_cipher)
             result = get_client(snapshot, None).place_bid(int(remote_id), int(freelancer_id), b.proposal, b.amount, b.days, b.milestone_pct)
@@ -1118,7 +1128,9 @@ def send_reserved(bid_id, remote_id, connection_id, environment, freelancer_id, 
         return {'status': 'submitted', 'bid_id': remote_bid_id}
 
 
-def run_autobid_cycle(uid):
+def run_autobid_cycle(uid, *, stop_event=None):
+    if stop_event is not None and stop_event.is_set():
+        return {'submitted': 0, 'reason': 'Worker is stopping'}
     if not PLATFORM_AUTO:
         return {'submitted': 0, 'reason': 'Platform auto-bidding disabled'}
     with SessionLocal() as s:
@@ -1149,6 +1161,8 @@ def run_autobid_cycle(uid):
         ).order_by(*order).yield_per(200)]
     count = 0
     for job_id in jobs:
+        if stop_event is not None and stop_event.is_set():
+            return {'submitted': count, 'reason': 'Worker is stopping'}
         try:
             with SessionLocal() as s:
                 u = require_subscription(s, uid)
@@ -1167,12 +1181,19 @@ def run_autobid_cycle(uid):
                 # Loaded fields remain available after session closes; no DB write lock during AI I/O.
                 days, milestone = u.default_days, u.milestone_pct
             cloud_limit(uid)
+            if stop_event is not None and stop_event.is_set():
+                return {'submitted': count, 'reason': 'Worker is stopping'}
             proposal_text = ai_proposal(raw, u)
+            if stop_event is not None and stop_event.is_set():
+                return {'submitted': count, 'reason': 'Worker is stopping'}
             draft = DraftIn(amount=amount, days=days, milestone_pct=milestone, proposal=proposal_text)
             with SessionLocal() as s:
                 # Re-read settings and atomically reserve after generation; a user can pause meanwhile.
                 reservation = reserve_bid(s, uid, job_id, draft=draft, source='auto')
-            send_reserved(*reservation)
+            if stop_event is None:
+                send_reserved(*reservation)
+            else:
+                send_reserved(*reservation, stop_event=stop_event)
             count += 1
         except HTTPException as exc:
             if exc.status_code in (401, 403, 429, 502):
@@ -1183,7 +1204,9 @@ def run_autobid_cycle(uid):
     return {'submitted': count}
 
 
-def run_autochat_cycle(uid):
+def run_autochat_cycle(uid, *, stop_event=None):
+    if stop_event is not None and stop_event.is_set():
+        return {'replied': 0}
     if not PLATFORM_AUTO:
         return {'replied': 0}
     with SessionLocal() as s:
@@ -1215,6 +1238,8 @@ def run_autochat_cycle(uid):
         return {'replied': 0}
     count = 0
     for th in threads:
+        if stop_event is not None and stop_event.is_set():
+            return {'replied': count}
         if not isinstance(th, dict):
             continue
         thread = th.get('thread') or th
@@ -1252,12 +1277,17 @@ def run_autochat_cycle(uid):
             cloud_limit(uid)
         except HTTPException:
             return {'replied': count}
+        if stop_event is not None and stop_event.is_set():
+            return {'replied': count}
         reply = ai_chat_reply(name, title, str(last_msg.get('message') or last_msg.get('body') or '')[:5000], u)
+        if stop_event is not None and stop_event.is_set():
+            return {'replied': count}
         with SessionLocal() as s:
             lock_user(s, uid)
             current_user = s.get(User, uid)
             current_conn = s.query(Connection).filter_by(user_id=uid).first()
-            if (not subscription_active(current_user) or not current_user.auto_chat_greeting
+            if ((stop_event is not None and stop_event.is_set())
+                    or not subscription_active(current_user) or not current_user.auto_chat_greeting
                     or not current_user.auto_admin_allowed or not current_conn
                     or (current_conn.id, current_conn.environment, current_conn.freelancer_id, current_conn.token_cipher) != snapshot):
                 return {'replied': count}
@@ -1275,6 +1305,10 @@ def run_autochat_cycle(uid):
                 s.rollback()
                 continue
             try:
+                if stop_event is not None and stop_event.is_set():
+                    record.status = 'cancelled'
+                    s.commit()
+                    return {'replied': count}
                 api.send_chat_message(int(tid), reply)
                 record.status = 'submitted'
                 audit(s, uid, 'auto_chat_replied', f'Thread #{tid}')
@@ -1289,7 +1323,9 @@ def run_autochat_cycle(uid):
     return {'replied': count}
 
 
-def perform_scan(uid, force=False):
+def perform_scan(uid, force=False, *, stop_event=None):
+    if stop_event is not None and stop_event.is_set():
+        return {'ok': False, 'found': 0, 'new': 0, 'auto_submitted': 0, 'chat_replied': 0, 'reason': 'Worker is stopping'}
     with SessionLocal() as s:
         lock_user(s, uid)
         u = require_subscription(s, uid)
@@ -1297,41 +1333,60 @@ def perform_scan(uid, force=False):
         if not c:
             raise ValueError('Connect your official Freelancer account first in Settings')
         require_freelancer_available(c, u)
+        if stop_event is not None and stop_event.is_set():
+            return {'ok': False, 'found': 0, 'new': 0, 'auto_submitted': 0, 'chat_replied': 0, 'reason': 'Worker is stopping'}
         now = int(time.time())
-        if c.last_scan and now - c.last_scan < 25:
-            raise ValueError('Please wait 25 seconds between rapid scans')
+        if c.scan_claim and int(c.scan_claim_until or 0) > now:
+            raise ValueError('A project scan is already running; wait for its result')
+        interval = SCAN_SECONDS if force else 25
+        if c.last_scan and now - c.last_scan < interval:
+            raise ValueError(f'Please wait {interval} seconds between project scans')
         snapshot = SimpleNamespace(token_cipher=c.token_cipher, environment=c.environment, freelancer_id=c.freelancer_id)
         connection_id = c.id
-        c.last_scan = now  # Claim this scan across workers before external I/O.
+        scan_claim = secrets.token_urlsafe(32)
+        c.scan_claim, c.scan_claim_until = scan_claim, now + 300
+        c.last_scan = now  # Cadence starts at the attempt, not after network work.
         s.commit()
         try:
             data = scan_for_user(u, snapshot)
-        except FreelancerError as exc:
             lock_user(s, uid)
             c = s.get(Connection, connection_id)
-            if c and (c.environment, c.freelancer_id, c.token_cipher) == (snapshot.environment, snapshot.freelancer_id, snapshot.token_cipher):
-                c.last_error = str(exc)[:300]
-            audit(s, uid, 'scan_failed', str(exc)[:180])
+            if (not c or c.scan_claim != scan_claim
+                    or (c.environment, c.freelancer_id, c.token_cipher) != (snapshot.environment, snapshot.freelancer_id, snapshot.token_cipher)):
+                raise ValueError('Connection or scan claim changed; results discarded. Scan again.')
+            u = require_subscription(s, uid)
+            for raw in data:
+                raw['environment'] = c.environment
+                raw['account_id'] = c.freelancer_id
+            n = ingest(s, u, data)
+            c.last_error = ''
+            c.last_scan_success_at = int(time.time())
+            c.scan_claim, c.scan_claim_until = '', 0
+            audit(s, uid, 'scan', f'{len(data)} API projects scanned; {n} new matches')
             s.commit()
-            record_freelancer_failure(uid, connection_id, (snapshot.environment, snapshot.freelancer_id, snapshot.token_cipher), exc)
+        except Exception as exc:
+            s.rollback()
+            lock_user(s, uid)
+            c = s.get(Connection, connection_id)
+            safe_error = str(exc)[:300] if isinstance(exc, FreelancerError) else 'Project scan did not complete; check the connection and try again.'
+            if (c and c.scan_claim == scan_claim
+                    and (c.environment, c.freelancer_id, c.token_cipher) == (snapshot.environment, snapshot.freelancer_id, snapshot.token_cipher)):
+                c.last_error = safe_error
+                c.scan_claim, c.scan_claim_until = '', 0
+            audit(s, uid, 'scan_failed', safe_error[:180])
+            s.commit()
+            if isinstance(exc, FreelancerError):
+                record_freelancer_failure(uid, connection_id, (snapshot.environment, snapshot.freelancer_id, snapshot.token_cipher), exc)
             raise
-        lock_user(s, uid)
-        c = s.get(Connection, connection_id)
-        if not c or (c.environment, c.freelancer_id, c.token_cipher) != (snapshot.environment, snapshot.freelancer_id, snapshot.token_cipher):
-            raise ValueError('Connection changed during scan; results discarded. Scan again.')
-        u = require_subscription(s, uid)
-        for raw in data:
-            raw['environment'] = c.environment
-            raw['account_id'] = c.freelancer_id
-        n = ingest(s, u, data)
-        c.last_error = ''
-        audit(s, uid, 'scan', f'{len(data)} API projects scanned; {n} new matches')
-        s.commit()
     auto_res, chat_res = {'submitted': 0}, {'replied': 0}
-    if PLATFORM_AUTO:
+    if PLATFORM_AUTO and not (stop_event is not None and stop_event.is_set()):
         try:
-            auto_res = run_autobid_cycle(uid)
-            chat_res = run_autochat_cycle(uid)
+            if stop_event is None:
+                auto_res = run_autobid_cycle(uid)
+                chat_res = run_autochat_cycle(uid)
+            else:
+                auto_res = run_autobid_cycle(uid, stop_event=stop_event)
+                chat_res = run_autochat_cycle(uid, stop_event=stop_event)
         except Exception:
             log.warning('Automation cycle failed for account %s; inspect account activity', uid)
     return {'ok': True, 'found': len(data), 'new': n,
@@ -1587,3 +1642,5 @@ from .preferences_api import install_preferences_routes
 install_preferences_routes(app, current, mutate)
 from .support import install_support_routes
 install_support_routes(app, current, mutate)
+from .live_status import install_live_routes
+install_live_routes(app, current)
