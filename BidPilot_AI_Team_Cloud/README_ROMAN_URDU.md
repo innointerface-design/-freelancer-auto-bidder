@@ -1,5 +1,7 @@
 # BidPilot AI — Ubuntu setup aur zaroori baatein
 
+**Latest v4.1 — 31 October 2026:** naya general Gemini/OpenAI chatbot, App help mode aur update commands [V4_1_CHATBOT_ROMAN_URDU.md](V4_1_CHATBOT_ROMAN_URDU.md) mein hain. Sidebar **AI Chat** kholein. Live AI ke liye valid saved key aur active subscription chahiye.
+
 **Latest v4 — 31 October 2026:** live Freelancer refresh, worker status, automatic bidding timing aur current WSL update commands ke liye [V4_FEATURES_ROMAN_URDU.md](V4_FEATURES_ROMAN_URDU.md) dekhein. Existing dark/purple design aur v3 features barqarar hain. Latest requirements install karein; web aur worker alag processes hain.
 
 Poore commands aur production details `README.md` mein hain. Is ZIP mein koi chat wali API key include nahi hai. Jo credentials chat mein share hue thay unhein revoke karke fresh keys banayein; keys sirf private `.env` ya logged-in Settings mein save karein.

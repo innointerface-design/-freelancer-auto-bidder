@@ -1,5 +1,7 @@
 # BidPilot AI v4 — live automation aur update
 
+**Latest update:** general Gemini/OpenAI chatbot ab [v4.1 AI Chat update](V4_1_CHATBOT_ROMAN_URDU.md) mein shamil hai. Neechay original v4 release ka scope aur worker instructions hain.
+
 31 October 2026: is update ka focus live Freelancer refresh, automatic bidding ki timing, Settings bugs aur same dark/purple design ko saaf banana hai. Existing accounts, encrypted keys, subscriptions, filters aur v3 app-help feature preserve rehte hain.
 
 ## Kya naya hai

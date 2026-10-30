@@ -1,8 +1,22 @@
-# BidPilot AI — v4 features and verification
+# BidPilot AI — v4.1 features and verification
+
+## v4.1 general AI Chat — 31 October 2026
+
+Current release verification: **445 application tests passed plus 26 subtests**, 58.09 seconds. Repository Ruff, Python compilation, JavaScript syntax and diff checks pass. One existing upstream Starlette TestClient deprecation warning remains. No new runtime dependency or database migration is introduced by the chatbot update.
+
+This update adds the requested general Gemini/OpenAI chatbot to the existing app. The sidebar now opens **AI Chat**, with **General assistant** selected by default and **App help** available separately. General questions, writing, coding, translation and follow-up conversation use the configured server-side provider transports. Auto tries Gemini then OpenAI; explicit provider selection uses only that provider. Replies show the actual provider/model. General-chat failures or inactive subscriptions are identified as unavailable, without presenting a canned app FAQ as a general AI answer.
+
+General chat uses a distinct trusted system role and redacted conversation only, without the app knowledge or workspace account snapshot. App help preserves its own scoped system role and limited current-account context. Chat has no tools or account actions. The proposal-generation safety defaults and worker behavior are unchanged. Login, CSRF, per-account AI quotas, active-subscription checks, expected-account mismatch guards and encrypted credential resolution remain enforced.
+
+The conversation stays in tab memory, with bounded input/history/output. Mode changes clear history and invalidate pending replies; Clear preserves mode/provider choices, while logout/account reset clears the conversation and choices. New drafts typed during a pending answer survive. Responses and user input render as inert text, including code and HTML-like strings. General unavailability is excluded from later cloud history. The original dark/purple design is retained with responsive conversation controls and starter prompts.
+
+Credential redaction now preserves complete environment-variable code examples in general conversation, including the provider prompt's JSON serialization and returned code. It still masks known credentials, recognizable secret prefixes, literal assignments, Bearer values and a password following an environment reference in a compact statement. Arbitrary/partial expressions do not receive the environment-reference exception. External providers are controlled test doubles; no supplied live key was validated and no live account action was performed.
+
+Actual Chromium passed **13 chatbot flows** against real local endpoints and controlled providers: honest unavailable state, separate app help, general coding questions without account context, follow-up history, explicit OpenAI, Gemini-to-OpenAI fallback, credential redaction, support-context isolation, mode-switch cancellation, logout/account privacy, intact Python/JavaScript environment examples, and 390px/360px layouts. No JavaScript/CSP errors or external calls occurred; anonymous `/api/me` 401 checks were expected. The previous v4 worker/upgrade verification below remains historical; its code is unchanged in this update. Live provider credentials and target-server deployment still require acceptance there.
 
 ## v4 release — 31 October 2026
 
-Current release verification: **402 application tests passed plus 26 subtests**, 55.80 seconds. The separate repository CLI/dashboard suite passed **340 tests**. Repository Ruff, JavaScript syntax, Python compilation, dependency consistency and diff checks passed. One upstream Starlette TestClient deprecation warning remains. Results under older release headings are historical.
+V4 release verification: **402 application tests passed plus 26 subtests**, 55.80 seconds. The separate repository CLI/dashboard suite passed **340 tests**. Repository Ruff, JavaScript syntax, Python compilation, dependency consistency and diff checks passed. One upstream Starlette TestClient deprecation warning remains. Results under older release headings are historical.
 
 The worker now checks scheduling every second, runs at most four accounts concurrently and records an independent heartbeat every ten seconds. A slow API/AI request for one account no longer serially blocks all other accounts. Background scan intervals are at least 60 seconds and are checked again under the database lock. Pending saved matches are checked between scans without repolling project/chat APIs. Successful scans feed the existing automatic proposal/bid flow immediately; all permission gates, project filters, schedules, bid gaps, quotas and provider waits remain enforced. These intervals are targets, not guarantees of a bid reaching a client within a minute.
 
@@ -20,7 +34,7 @@ External API protocols are tested with controlled providers. No supplied live AI
 
 ## v3 release — 30 October 2026
 
-Current release verification: **370 tests passed plus 26 subtests**, 52.81 seconds; JavaScript syntax, diff checks and the existing repository Ruff check pass. One upstream Starlette TestClient deprecation warning remains. The results below under older patch headings describe earlier revisions.
+V3 release verification: **370 tests passed plus 26 subtests**, 52.81 seconds; JavaScript syntax, diff checks and the existing repository Ruff check pass. One upstream Starlette TestClient deprecation warning remains. The results below under older patch headings describe earlier revisions.
 
 The v3 feature release adds validated project/client/currency filters, selected search fields, manual-review keywords, keyword/default templates, timezone-aware working hours, FIFO/score ordering, persisted dispatch spacing and credential-free configuration backup/restore. New-account defaults are 10 bids/day and 3/hour; existing explicit limits remain. SQLite/PostgreSQL receive additive user/connection columns, preserving accounts, passwords and encrypted credentials. Portable timezone data is pinned, with a regression that disables system timezone files and verifies Karachi working hours using the packaged data.
 

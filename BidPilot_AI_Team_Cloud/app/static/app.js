@@ -108,7 +108,7 @@ function navigate(view){
   const panel=$('view-'+view);if(!panel)return;
   panel.classList.remove('hidden');
   document.querySelectorAll('[data-nav]').forEach(el=>el.classList.toggle('active',el.dataset.nav===view));
-  $('crumb').textContent=({overview:'Overview',jobs:'Opportunities',proposals:'My Proposals',activity:'Activity Log',settings:'AI & Bidder Settings',billing:'Subscription & Payment',team:'Team & SaaS Admin',support:'AI Help'})[view]||'Dashboard';
+  $('crumb').textContent=({overview:'Overview',jobs:'Opportunities',proposals:'My Proposals',activity:'Activity Log',settings:'AI & Bidder Settings',billing:'Subscription & Payment',team:'Team & SaaS Admin',support:'AI Chat'})[view]||'Dashboard';
   if(view==='activity')loadActivity();
   if(view==='proposals'){renderProposals();loadLiveBids();}
   if(view==='team')loadTeam();
