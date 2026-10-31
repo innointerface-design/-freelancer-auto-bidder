@@ -1,8 +1,22 @@
-# BidPilot AI — v4.4.1 features and verification
+# BidPilot AI — v4.4.2 features and verification
+
+## v4.4.2 manual paid-plan expiry and separate login controls — 31 October 2026
+
+Current release verification: **592 application tests passed plus 26 subtests**, 111.14 seconds. Root-repository Ruff, focused new/changed Python syntax/name checks, Python compilation, JavaScript syntax and diff checks pass. One upstream Starlette TestClient deprecation warning remains. This does not claim that the standalone application's pre-existing full style-lint backlog is eliminated.
+
+The user identified disabling the account as the cause of the reported sign-in failure. Manage users now offers **Expire plan** for paid active/trial plans, with an explicit target/plan confirmation. The existing account actions are labeled **Disable login / Enable login**, and each row reports its login status. Cancelling expiry makes no request. Founder accounts have no paid-expiry action; paid administrators can expire their own paid plan and retain sign-in/administration.
+
+The administrator-only, CSRF-protected expiry endpoint requires the current actor and target tier/status/end-date snapshot. It locks and re-reads the target, rejects stale views after a renewal/change, sets paid access expired now (preserving any earlier natural end date), pauses only that user's automatic bids/greetings, and writes an audit in the same transaction. Passwords, Enabled status, sessions, original activation/quota anchors, receipts, bid history, saved keys and other accounts remain. A matching already-expired request is idempotent. Normal plan switches also lock the target before reading it, sharing serialization with payment approval/manual expiry. No schema migration, runtime dependency or public password-reset route is introduced.
+
+Existing natural expiry and auto-bidding controls remain: the worker expires due subscriptions, paid operations enforce the clock independently, and Allow Auto / Pause Auto control member permission separately from account login or plan status. Active automation still requires a customer opt-in, valid Freelancer connection, server approval, configured limits and a running worker. Installing this release does not turn every user's bidding on. Verified renewal does not silently restart automation paused by expiry.
+
+Actual Chromium passed **12 flows**: paid/founder/disabled action visibility; Pause Auto and Allow Auto without changing login/plan; cancel and confirm; unchanged password/account/billing anchors; retained customer session and same-password re-login with Billing access while paid AI is denied; member authorization; stale plan-change rejection; disabled-target preservation; 390px/360px layouts; and own paid-administrator expiry. No page errors or external requests occurred. Screenshots were inspected. A separate actual **PostgreSQL17 smoke** verified six concurrent expiry requests yield one change/audit, target credentials/anchors remain, same-password login succeeds, paid operations fail, and a later plan grant cannot be expired by the earlier snapshot. All data/providers were synthetic; no actual marketplace bids or payment settlement were performed.
+
+[Operator steps and automation controls](V4_4_2_PLAN_EXPIRY_ROMAN_URDU.md).
 
 ## v4.4.1 existing-account diagnosis and secure local recovery — 31 October 2026
 
-Current release verification: **570 application tests passed plus 26 subtests**, 86.93 seconds. Repository Ruff, Python compilation and diff checks pass. One upstream Starlette TestClient deprecation warning remains. No schema change, runtime dependency or new public authentication endpoint is introduced.
+V4.4.1 release verification: **570 application tests passed plus 26 subtests**, 86.93 seconds. Repository Ruff, Python compilation and diff checks pass. One upstream Starlette TestClient deprecation warning remains. No schema change, runtime dependency or new public authentication endpoint is introduced.
 
 The user's remaining401 is distinct from the previously reproduced429. Code review found no plan/payment path that changes the password or Enabled state. Legacy350k PBKDF2 remains supported. The generated relative SQLite URL can resolve to different files when a web process starts from another working directory; this is a diagnostic possibility, not a confirmed cause in the customer's installation. Initial registration creates a session directly and does not prove that a later saved/autofilled password matches.
 
@@ -10,7 +24,7 @@ Local `manage_login.py check --email ... [--verify-password]` reports an existin
 
 The **23 recovery tests** cover preservation, read-only matching/mismatching checks, nonterminal/getpass fallback refusal, missing database, scoped state, rollback and password-change races. An additional **5-flow actual pseudo-terminal/FastAPI smoke** verified hidden input with echo disabled, startup from a different working directory, matching and mismatching passwords, a literal Unicode/metacharacter password reset, old-cookie/password rejection, successful login to the same Pro account and unchanged billing/credential fields. All data was synthetic; no external provider was called.
 
-The customer's actual database and password have not been inspected. The customer-reported401 is still pending the local check; no claim is made that publishing this release alone repairs an unknown credential or configuration mismatch. [Operator steps](V4_4_1_ACCOUNT_RECOVERY_ROMAN_URDU.md).
+At the v4.4.1 release, the customer's actual database and password had not been inspected and the reported401 was pending a local check. The user subsequently identified a disabled account as the cause. Publishing account recovery alone does not enable a disabled account or repair an unknown configuration mismatch. [Operator steps](V4_4_1_ACCOUNT_RECOVERY_ROMAN_URDU.md).
 
 ## v4.4 Pro sign-in and limiter repair — 31 October 2026
 

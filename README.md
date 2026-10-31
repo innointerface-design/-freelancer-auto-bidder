@@ -4,11 +4,12 @@ A Python 3.11+ bidding engine and CLI with a FastAPI web dashboard. It finds rel
 
 The service profile covers short-form video editing; YouTube Shorts, Instagram Reels and TikTok; motion graphics and After Effects; AI video ads and animation; product and promotional videos; Premiere Pro and DaVinci Resolve. This initial version handles active, fixed-price projects. Hourly projects are skipped.
 
-## BidPilot AI Updated v4.4.1 — source and ZIP download
+## BidPilot AI Updated v4.4.2 — source and ZIP download
 
 The reviewed BidPilot SaaS application is available here:
 
-- [Download the complete updated v4.4.1 ZIP](https://github.com/innointerface-design/-freelancer-auto-bidder/raw/refs/heads/main/downloads/BidPilot_AI_Updated_v4_4_1.zip)
+- [Download the complete updated v4.4.2 ZIP](https://github.com/innointerface-design/-freelancer-auto-bidder/raw/refs/heads/main/downloads/BidPilot_AI_Updated_v4_4_2.zip)
+- [Expire a paid plan manually while preserving account login](BidPilot_AI_Team_Cloud/V4_4_2_PLAN_EXPIRY_ROMAN_URDU.md)
 - [Check and recover an existing account while preserving its paid plan](BidPilot_AI_Team_Cloud/V4_4_1_ACCOUNT_RECOVERY_ROMAN_URDU.md)
 - [Pro sign-in fix and scoped lock recovery](BidPilot_AI_Team_Cloud/V4_4_LOGIN_FIX_ROMAN_URDU.md)
 - [Payment accounts, monthly plans and account security](BidPilot_AI_Team_Cloud/V4_3_BILLING_SECURITY_ROMAN_URDU.md)

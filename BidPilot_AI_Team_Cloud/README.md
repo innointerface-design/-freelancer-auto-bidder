@@ -1,5 +1,7 @@
 # BidPilot AI — reviewed project
 
+**v4.4.2 manual plan expiry:** [use the admin Expire plan button](V4_4_2_PLAN_EXPIRY_ROMAN_URDU.md) to stop paid access and automation while preserving account login, payment history and credentials. Disable login is labeled separately. Existing automatic expiry still applies.
+
 **v4.4.1 existing-account recovery:** [check the actual database/password and recover the same account](V4_4_1_ACCOUNT_RECOVERY_ROMAN_URDU.md). A local operator can diagnose401 with hidden password input or reset an existing enabled account's password, preserving its paid plan and dates. No new public reset endpoint or email service is added. V4.4's limiter fixes remain.
 
 **v4.4 sign-in fix:** [diagnosis, upgrade and recovery steps](V4_4_LOGIN_FIX_ROMAN_URDU.md). Successful/shared-IP sign-ins no longer consume the failed-password allowance, and registration no longer issues a redundant login. Persistent account/network failure limits and a separate request cap remain. The UI shows the server's retry countdown. Admins can reset a selected member's sign-in failure lock, with a local operator recovery command available; neither changes passwords or subscriptions. Pro upgrades and renewals preserve the original password.

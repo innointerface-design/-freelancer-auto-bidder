@@ -151,6 +151,13 @@ class MemberPlanIn(InputModel):
     monthly_fee: float = 40.0
 
 
+class PlanExpiryIn(InputModel):
+    expected_user_id: int = Field(ge=1, strict=True)
+    expected_plan_tier: Literal['paid_starter', 'paid_pro']
+    expected_subscription_status: Literal['active', 'trial', 'inactive', 'expired']
+    expected_subscription_expires: int = Field(ge=0, strict=True)
+
+
 class PaymentSubmitIn(InputModel):
     plan_tier: Literal['paid_starter', 'paid_pro'] = 'paid_starter'
     method: str = Field(min_length=2, max_length=50)
@@ -751,16 +758,51 @@ def new_member(x: MemberIn, uid: int = Depends(mutate)):
 def update_member_plan(member_id: int, x: MemberPlanIn, uid: int = Depends(mutate)):
     admin_only(uid)
     with SessionLocal() as s:
+        # Share the member's lock with payment approval and manual expiry.
+        # Keep lock order deterministic when administrator and member differ.
+        for user_id in sorted({uid, member_id}):
+            lock_user(s, user_id)
         u = s.get(User, member_id)
         if not u:
             raise HTTPException(404, 'Member not found')
-        lock_user(s, uid)
         if x.plan_tier == 'free_team' and u.plan_tier != 'free_team' and s.query(User).filter_by(plan_tier='free_team').count() >= 2:
             raise HTTPException(409, 'Both free founder slots are already assigned')
         apply_plan(u, x.plan_tier, x.subscription_status)
         audit(s, uid, 'member_plan_updated', f'{u.email}: {u.plan_tier} ({u.subscription_status}, ${u.monthly_fee}/mo)')
         s.commit()
         return {'ok': True, 'member': public_user(u)}
+
+
+@app.post('/api/team/{member_id}/expire-plan')
+def expire_member_plan(member_id: int, x: PlanExpiryIn, uid: int = Depends(mutate)):
+    admin_only(uid)
+    if x.expected_user_id != uid:
+        raise HTTPException(409, 'Account changed. Reload before expiring a plan.')
+    with SessionLocal() as s:
+        lock_user(s, member_id)
+        u = s.get(User, member_id)
+        if not u:
+            raise HTTPException(404, 'Member not found')
+        if u.plan_tier not in ('paid_starter', 'paid_pro'):
+            raise HTTPException(400, 'Founder accounts do not have a paid plan to expire')
+        if (u.plan_tier, u.subscription_status, int(u.subscription_expires or 0)) != (
+                x.expected_plan_tier, x.expected_subscription_status, x.expected_subscription_expires):
+            raise HTTPException(409, 'This plan changed. Reload and review its current dates before expiring it.')
+        if u.subscription_status == 'expired':
+            return {'ok': True, 'already_expired': True, 'member': public_user(u)}
+        now = int(time.time())
+        previous_expiry = int(u.subscription_expires or 0)
+        u.subscription_status = 'expired'
+        # Preserve an earlier natural expiry; never extend expired access.
+        u.subscription_expires = min(previous_expiry, now) if previous_expiry > 0 else now
+        u.auto_requested = False
+        u.auto_chat_greeting = False
+        u.updated = now
+        audit(s, member_id, 'subscription_expired_manual',
+              f'Administrator {uid} ended paid access at {u.subscription_expires}; '
+              'automatic bids and greetings paused. Account status and billing history preserved.')
+        s.commit()
+        return {'ok': True, 'already_expired': False, 'member': public_user(u)}
 
 
 @app.post('/api/team/{member_id}/login-unlock')
