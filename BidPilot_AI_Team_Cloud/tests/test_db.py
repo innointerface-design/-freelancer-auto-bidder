@@ -115,7 +115,8 @@ def test_subscription_expiry_and_fixed_prices():
     db.apply_plan(user, 'paid_starter', now=100)
     assert user.monthly_fee == 10 and user.monthly_bid_limit == 150
     assert db.subscription_active(user, now=101)
-    assert not db.subscription_active(user, now=100 + 30 * 86400)
+    assert user.subscription_expires == 100 + 31 * 86400  # 1 January -> 1 February.
+    assert not db.subscription_active(user, now=user.subscription_expires)
     db.apply_plan(user, 'paid_pro', now=200)
     assert user.monthly_fee == 40 and user.monthly_bid_limit == 0
     db.apply_plan(user, 'free_team', now=300)
@@ -551,10 +552,13 @@ def test_explicit_test_mode_never_imports_neighboring_dotenv_credentials(tmp_pat
     import subprocess
     import sys
     from pathlib import Path
-    # Copy only the module into a sandbox directory so default dotenv discovery
+    # Copy the minimal package into a sandbox so default dotenv discovery
     # would find this synthetic .env rather than any operator configuration.
-    module_path = tmp_path / 'isolated_db_module.py'
-    module_path.write_bytes(Path(db.__file__).read_bytes())
+    package = tmp_path / 'isolated_database'
+    package.mkdir()
+    (package / '__init__.py').write_text('')
+    (package / 'db.py').write_bytes(Path(db.__file__).read_bytes())
+    (package / 'billing_lifecycle.py').write_bytes(Path(db.__file__).with_name('billing_lifecycle.py').read_bytes())
     (tmp_path / '.env').write_text(
         'GEMINI_API_KEY=synthetic-private-gemini-token\n'
         'OPENAI_API_KEY=synthetic-private-openai-token\n'
@@ -567,15 +571,12 @@ def test_explicit_test_mode_never_imports_neighboring_dotenv_credentials(tmp_pat
     for variable in ('GEMINI_API_KEY', 'OPENAI_API_KEY', 'ADMIN_PASSWORD_B64'):
         environment.pop(variable, None)
     code = '''
-import importlib.util, os, sys
-spec = importlib.util.spec_from_file_location('isolated_database', sys.argv[1])
-module = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = module
-spec.loader.exec_module(module)
+import os
+from isolated_database import db as module
 for variable in ('GEMINI_API_KEY', 'OPENAI_API_KEY', 'ADMIN_PASSWORD_B64'):
     assert variable not in os.environ, variable
 assert module._bootstrap_password('ADMIN_PASSWORD') == 'explicit-isolated-test-password'
 '''
-    result = subprocess.run([sys.executable, '-c', code, str(module_path)], cwd=str(tmp_path),
+    result = subprocess.run([sys.executable, '-c', code], cwd=str(tmp_path),
                             env=environment, capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr

@@ -6,6 +6,7 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.exc import IntegrityError
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
+from .billing_lifecycle import next_calendar_month, subscription_start
 
 # Test processes provide isolated credentials explicitly. Loading a developer's
 # .env here could reintroduce real provider keys or an overriding password_B64.
@@ -118,7 +119,8 @@ def apply_plan(user, tier, status='active', now=None):
     user.monthly_fee = config['monthly_fee']
     user.monthly_bid_limit = config['monthly_bid_limit']
     user.subscription_status = status
-    user.subscription_expires = 0 if tier == 'free_team' or status not in ('active', 'trial') else now + 30 * 86400
+    user.subscription_expires = 0 if tier == 'free_team' or status not in ('active', 'trial') else next_calendar_month(now)
+    user.subscription_started_at = now if tier != 'free_team' and status in ('active', 'trial') else 0
     user.billing_period_started = now
     return user
 
@@ -163,6 +165,7 @@ class User(Base):
     subscription_status = Column(String(30), default='inactive')
     monthly_fee = Column(Float, default=40.0)
     subscription_expires = Column(Integer, default=0)
+    subscription_started_at = Column(Integer, default=0)
     billing_period_started = Column(Integer, default=0)
     monthly_bid_limit = Column(Integer, default=0)
     lock_version = Column(Integer, default=0)
@@ -294,6 +297,9 @@ class PaymentRequest(Base):
     status = Column(String(30), default='pending')
     created = Column(Integer, default=lambda: int(time.time()))
     reviewed_at = Column(Integer, default=0)
+    reviewed_by = Column(Integer, default=0)
+    access_starts_at = Column(Integer, default=0)
+    access_expires_at = Column(Integer, default=0)
     __table_args__ = (UniqueConstraint('method', 'transaction_id', name='uq_payment_reference'),)
 
 
@@ -387,6 +393,7 @@ def _auto_migrate_sqlite():
             ('subscription_status', "VARCHAR(30) DEFAULT 'inactive'"),
             ('monthly_fee', 'FLOAT DEFAULT 40.0'),
             ('subscription_expires', 'INTEGER DEFAULT 0'),
+            ('subscription_started_at', 'INTEGER DEFAULT 0'),
             ('billing_period_started', 'INTEGER DEFAULT 0'),
             ('monthly_bid_limit', 'INTEGER DEFAULT 0'),
             ('lock_version', 'INTEGER DEFAULT 0'),
@@ -419,7 +426,10 @@ def _auto_migrate_sqlite():
             ('scan_claim', "VARCHAR(80) DEFAULT ''"),
             ('scan_claim_until', 'INTEGER DEFAULT 0'),
         ],
-        'payment_requests': [('plan_tier', "VARCHAR(30) DEFAULT 'paid_pro'")],
+        'payment_requests': [('plan_tier', "VARCHAR(30) DEFAULT 'paid_pro'"),
+                             ('reviewed_by', 'INTEGER DEFAULT 0'),
+                             ('access_starts_at', 'INTEGER DEFAULT 0'),
+                             ('access_expires_at', 'INTEGER DEFAULT 0')],
         'chat_greeted': [('status', "VARCHAR(30) DEFAULT 'unknown'")],
     }
     with engine.begin() as conn:
@@ -609,9 +619,14 @@ def public_user(u, connection=None):
         role=u.role,
         active=u.active,
         plan_tier=getattr(u, 'plan_tier', 'paid_pro'),
-        subscription_status=('expired' if u.subscription_status in ('active', 'trial') and not subscription_active(u) else u.subscription_status),
+        subscription_status=('expired' if u.plan_tier in ('paid_starter', 'paid_pro')
+                             and u.subscription_status in ('active', 'trial')
+                             and int(u.subscription_expires or 0) <= int(time.time()) else u.subscription_status),
         subscription_active=subscription_active(u),
         subscription_expires=u.subscription_expires,
+        subscription_started_at=subscription_start(u),
+        billing_period_label='calendar month',
+        billing_timezone='Asia/Karachi',
         billing_period_started=u.billing_period_started,
         monthly_bid_limit=u.monthly_bid_limit,
         monthly_fee=getattr(u, 'monthly_fee', 40.0),

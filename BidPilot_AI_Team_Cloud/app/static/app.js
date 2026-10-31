@@ -1,6 +1,7 @@
 'use strict';
 const $=id=>document.getElementById(id),S={me:null,csrf:'',jobs:[],selected:null,nav:'overview',intent:null,team:[],seen:null,alerts:false,ai_provider:'',payment_methods:{},registering:false,epoch:0,refreshRevision:0,proposalRevision:0,editorRevision:0,bidBusy:false,authBusy:false,aiBusy:'',aiRevision:0,basicBusy:false,basicRevision:0};
 const A={settings:null,templates:[],dirty:false,busy:'',loading:false,revision:0,loadRevision:0,restoreRevision:0,restore:null};
+const P={settings:null,busy:false,loading:false,dirty:false,revision:0,loadRevision:0,billingRevision:0,teamRevision:0,paymentBusy:false,decisionBusy:false};
 const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const usd=j=>{const c=j.currency||'Currency unknown',a=j.budget_min,b=j.budget_max;return a==null&&b==null?`${c} · Budget flexible`:`${c} ${a??'?'}${b!=null?'–'+b:''}${j.type?.includes('hour')?'/hr':''}`};
 const age=t=>{if(!t)return 'Not scanned yet';return new Date(Number(t)*1000).toLocaleString()};
@@ -24,8 +25,11 @@ function resetSession(){
   Object.assign(S,{me:null,csrf:'',jobs:[],selected:null,nav:'overview',intent:null,team:[],seen:null,alerts:false,ai_provider:'',payment_methods:{},bidBusy:false,authBusy:false,aiBusy:'',basicBusy:false});
   window.clearSupportChat?.();
   window.clearAutomationLive?.();
+  window.clearAccountSecurity?.();
+  P.revision++;P.loadRevision++;P.billingRevision++;P.teamRevision++;
+  Object.assign(P,{settings:null,busy:false,loading:false,dirty:false,paymentBusy:false,decisionBusy:false});
   document.querySelectorAll('form').forEach(form=>form.reset());
-  for(const id of ['teamList','adminPaymentsList','teamOverview','billingSummaryBox','topJobs','jobsTable','proposalsBody','liveBidsBody','activityBody','myPlanBanner','myPaymentsList','paymentMethodsBox','aiKeysBanner','aiTestResultBox','testChatBox','aiReviewBox','connectionBanner','autoStatus','chatStatus','aiStatus','modalNotice','modalTitle','modalDesc','modalMeta','modalTrust','modalReasons','confirmText','confirmProposal','accountName','accountEmail','greeting','avatar','planStatus','connStatus','lastScan','planBadgeTitle','planBadgeDesc','geminiMaskBadge','openaiMaskBadge'])$(id).textContent='';
+  for(const id of ['teamList','adminPaymentsList','teamOverview','billingSummaryBox','topJobs','jobsTable','proposalsBody','liveBidsBody','activityBody','myPlanBanner','myPaymentsList','paymentMethodsBox','paymentIdentity','paymentSettingsMessage','aiKeysBanner','aiTestResultBox','testChatBox','aiReviewBox','connectionBanner','autoStatus','autoWarning','chatStatus','aiStatus','modalNotice','modalTitle','modalDesc','modalMeta','modalTrust','modalReasons','confirmText','confirmProposal','accountName','accountEmail','greeting','avatar','planStatus','connStatus','lastScan','planBadgeTitle','planBadgeDesc','geminiMaskBadge','openaiMaskBadge'])$(id).textContent='';
   for(const id of ['bidProposal','bidAmount','bidDays','bidMilestone','loginEmail','loginPassword','registerName','connectToken','confirmation','jobSearch'])$(id).value='';
   $('visitProject').removeAttribute('href');$('whatsappApproveBtn').removeAttribute('href');
   $('scoreFilter').value='0';$('countryFilter').value='';$('typeFilter').value='all';
@@ -117,16 +121,35 @@ function navigate(view){
   window.scrollTo(0,0);
 }
 
+function autoBidReadiness(user){
+  if(!S.platform_auto)return {
+    status:'Server switch OFF',
+    message:user.role==='admin'
+      ?'Server auto-bidding is OFF. From the application folder run .venv/bin/python configure_autobid.py enable, then restart both the web server and worker. Next enable Auto-Pilot below and save. Review Freelancer permission and your account limits before starting.'
+      :'Server auto-bidding is OFF. The workspace operator controls this switch. Ask the operator to enable it; your personal Auto-Pilot setting and account limits also apply.',
+  };
+  if(!user.subscription_active)return {status:'Subscription inactive',message:'Automatic bidding needs an active subscription. Review your plan in Billing; the server switch is ON, but this account is not eligible yet.'};
+  if(!user.auto_admin_allowed)return {status:'Paused by administrator',message:'An administrator has paused automatic bidding for this account. Ask the workspace operator to review your account permission.'};
+  const pause=freelancerPauseReason(user);
+  if(pause)return {status:user.api_pause_reason==='rate_limited'?'API cooldown':'Freelancer access paused',message:pause+' Automatic bids remain paused while this restriction applies.'};
+  if(!user.connected)return {status:'Connect Freelancer',message:'Connect your verified Freelancer OAuth account in Settings first. Then review your filters and bid limits, enable Auto-Pilot below and save.'};
+  if(!user.auto_requested)return {status:'Auto-Pilot OFF',message:'The server switch is ON. Review your filters, working hours and bid limits, then select the Auto-Pilot checkbox below and save these settings to request automatic bids. Auto-chat is a separate opt-in setting.'};
+  return {status:'Enabled (worker required)',message:'Your Auto-Pilot preference is saved. Keep the web server and worker running, and check the worker heartbeat and scan results in Overview. Every bid still follows your filters, schedule, minimum gap and account limits.'};
+}
+
 function renderStatus(){
   const u=S.me;if(!u)return;
   window.refreshAutomationLive?.();
+  window.refreshAccountSecurity?.();
   $('connStatus').textContent=u.connected?`@${u.freelancer_name} (${u.environment})`:'Not connected';
   $('lastScan').textContent=age(u.last_scan_success_at);
   const isVip=u.plan_tier==='free_team';
   $('planStatus').textContent=isVip?'Founder (free)':`${planName(u.plan_tier)} ($${planPrice(u.plan_tier)}/mo — ${u.subscription_status})`;
   $('planBadgeTitle').textContent=isVip?'✦ Founder (free)':`✦ ${planName(u.plan_tier)} (${String(u.subscription_status).toUpperCase()})`;
   $('planBadgeDesc').textContent=!u.subscription_active?'Subscription inactive — demo templates available':u.auto_requested?`Auto-bid requested (${u.milestone_pct||100}% milestone)`:'Manual bidding available';
-  $('autoStatus').textContent=u.auto_requested&&u.auto_admin_allowed&&S.platform_auto&&u.connected&&u.subscription_active?'Enabled (worker required)':'Paused / Manual Mode';
+  const auto=autoBidReadiness(u);
+  $('autoStatus').textContent=auto.status;
+  $('autoWarning').textContent=auto.message;
   if($('chatStatus'))$('chatStatus').textContent=u.auto_chat_greeting&&S.platform_auto&&u.connected&&u.subscription_active?'Enabled (worker required)':'Off';
   if($('aiStatus').previousElementSibling)$('aiStatus').previousElementSibling.textContent='Configured AI providers';
   $('aiStatus').textContent=u.subscription_active?(S.ai_provider||'Template fallback'):'Templates (subscription inactive)';
@@ -501,40 +524,126 @@ if($('advancedSettingsForm')){
   };
 }
 
+function billingDate(value){return value?age(value):'Not activated';}
+function paymentChannels(methods){
+  const allowed=new Set(['jazzcash','easypaisa','nayapay','meezan','bank','stripe']);
+  if(Array.isArray(methods.channels))return methods.channels.filter(channel=>channel&&allowed.has(channel.id)&&typeof channel.details==='string'&&channel.details.trim());
+  return [['jazzcash','JazzCash',methods.jazzcash],['easypaisa','Easypaisa',methods.easypaisa],['nayapay','NayaPay',methods.nayapay],['meezan','Meezan',methods.meezan],['bank','Other bank transfer',methods.bank],['stripe','Card payment',safePaymentUrl(methods.stripe_url)]].filter(([, ,value])=>value).map(([id,label,details])=>({id,label,details,account_title:''}));
+}
+function billingSessionError(error){
+  if(error?.status===409&&/account|session/i.test(error.message||'')){resetSession();window.location.reload();return true;}
+  return false;
+}
 async function loadBilling(){
+  if(!S.me)return;
+  const epoch=S.epoch,accountId=S.me.id,revision=++P.billingRevision;
   try{
-    const x=await api('/api/billing');
-    if(S.me&&typeof x.subscription_active==='boolean'){Object.assign(S.me,{plan_tier:x.plan_tier,subscription_status:x.subscription_status,subscription_expires:x.subscription_expires,subscription_active:x.subscription_active});renderStatus();}
-    const isFree=x.plan_tier==='free_team';
+    const x=await api('/api/billing?expected_user_id='+encodeURIComponent(accountId));
+    if(epoch!==S.epoch||S.me?.id!==accountId||revision!==P.billingRevision)return;
+    if(x.user_id!=null&&x.user_id!==accountId){resetSession();window.location.reload();return;}
+    if(typeof x.subscription_active==='boolean'){Object.assign(S.me,{plan_tier:x.plan_tier,subscription_status:x.subscription_status,subscription_started_at:x.subscription_started_at,subscription_expires:x.subscription_expires,subscription_active:x.subscription_active});renderStatus();}
+    const isFree=x.plan_tier==='free_team',start=x.subscription_started_at??x.billing_period_started??0;
     $('myPlanBanner').innerHTML=isFree
-      ?`<b>✦ Founder account (free)</b><p>No subscription fee. Your configured bidding limits and Freelancer account limits still apply.</p>`
-      :`<b>✦ ${esc(planName(x.plan_tier))} ($${planPrice(x.plan_tier)}/month — ${esc(String(x.subscription_status).toUpperCase())})</b><p>Starter: $10/month, 150 bids per billing period. Pro: $40/month, no monthly app quota; your hourly, daily and Freelancer limits apply. ${x.subscription_expires?'Access expires: '+esc(age(x.subscription_expires))+'. ':''}Submit a receipt for the selected package; an administrator verifies it before activation.</p>`;
-    const pm=S.payment_methods||{};
-    const stripe=safePaymentUrl(pm.stripe_url);
-    const methods=[['JazzCash',pm.jazzcash],['EasyPaisa',pm.easypaisa],['Bank transfer',pm.bank]].filter(([,value])=>value);
-    $('paymentMethodsBox').innerHTML=methods.map(([label,value])=>`<div><b>${esc(label)}:</b> ${esc(value)}</div>`).join('')+(stripe?`<div><b>Card payment:</b> <a href="${esc(stripe)}" target="_blank" rel="noopener noreferrer">Open payment provider ↗</a></div>`:'')||'Payment details are not configured. Contact the administrator before sending money.';
+      ?'<b>✦ Founder account (free)</b><p>No subscription fee. Your configured bidding limits and Freelancer account limits still apply.</p>'
+      :`<b>✦ ${esc(planName(x.plan_tier))} ($${planPrice(x.plan_tier)}/month — ${esc(String(x.subscription_status).toUpperCase())})</b><p>Starter: $10/month, 150 bids per billing period. Pro: $40/month, no monthly app quota; your hourly, daily and Freelancer limits apply. New activations run to the same date next calendar month (month-end adjusts when needed). Existing saved expiry dates remain. An administrator verifies settled funds before activation.</p><div class="plan-dates"><span>Activated: ${esc(billingDate(start))}</span><span>Access expires: ${x.subscription_expires?esc(age(x.subscription_expires)):'No active expiry'}</span></div>`;
+    $('paymentIdentity').textContent=`Payment account: ${S.me.name||'Registered customer'} · ${S.me.email||''}. Your name and email identify this request. Never send your password, PIN or OTP to an administrator.`;
+    const pm=x.payment_methods||S.payment_methods||{};S.payment_methods=pm;
+    const channels=paymentChannels(pm),stripe=safePaymentUrl(pm.stripe_url);
+    $('paymentMethodsBox').innerHTML=channels.map(channel=>{
+      const details=channel.id==='stripe'?safePaymentUrl(channel.details):'';
+      if(channel.id==='stripe'&&!details)return '';
+      return `<div class="payment-method"><b>${esc(channel.label)}:</b> ${details?`<a href="${esc(details)}" target="_blank" rel="noopener noreferrer">Open payment provider ↗</a>`:esc(channel.details)}${channel.account_title?`<small>Account title: ${esc(channel.account_title)}</small>`:''}</div>`;
+    }).join('')||'Payment details are not configured. Contact the administrator before sending money.';
+    const available=new Set(channels.filter(channel=>channel.id!=='stripe'||safePaymentUrl(channel.details)).map(channel=>channel.id));
     const methodSelect=$('paymentForm').elements.method;
-    for(const option of methodSelect.options||[])option.disabled=!({jazzcash:pm.jazzcash,easypaisa:pm.easypaisa,bank:pm.bank,stripe}[option.value]);
-    if(methodSelect.selectedOptions?.[0]?.disabled){const available=Array.from(methodSelect.options).find(option=>!option.disabled);methodSelect.value=available?.value||'';}
-    $('paymentForm').querySelector?.('button[type="submit"]')?.toggleAttribute('disabled',!methods.length&&!stripe);
+    for(const option of methodSelect.options||[])option.disabled=!available.has(option.value);
+    if(!available.has(methodSelect.value)){const first=Array.from(methodSelect.options||[]).find(option=>!option.disabled);methodSelect.value=first?.value||'';}
+    $('paymentForm').querySelector?.('button[type="submit"]')?.toggleAttribute('disabled',P.paymentBusy||!available.size);
     const wa=String(pm.whatsapp||'').replace(/[^0-9]/g,'');
     $('whatsappApproveBtn').classList.toggle('hidden',!wa);
     if(wa)$('whatsappApproveBtn').href=`https://wa.me/${wa}?text=${encodeURIComponent(`Salam! I submitted a BidPilot subscription payment for account ${S.me.email}. Please verify receipt.`)}`;
-    $('myPaymentsList').innerHTML=x.payments.length?x.payments.map(p=>`<div class="activity-row"><div><b>${esc(planName(p.plan_tier))} · ${esc(p.method)} — ${esc(p.currency)} ${esc(p.amount)}</b><div class="job-sub">TID: ${esc(p.transaction_id)} · Status: <span class="tag ${p.status==='approved'?'green':'orange'}">${esc(p.status.toUpperCase())}</span></div></div><small>${esc(age(p.created))}</small></div>`).join(''):'<div class="empty">No payment submissions yet</div>';
-  }catch(e){notify(e.message,true)}
+    else $('whatsappApproveBtn').removeAttribute('href');
+    $('myPaymentsList').innerHTML=(x.payments||[]).length?x.payments.map(p=>`<div class="activity-row"><div><b>${esc(planName(p.plan_tier))} · ${esc(p.method)} — ${esc(p.currency)} ${esc(p.amount)}</b><div class="job-sub">TID: ${esc(p.transaction_id)} · Status: <span class="tag ${p.status==='approved'?'green':'orange'}">${esc(String(p.status).toUpperCase())}</span>${p.reviewed_at?' · Reviewed: '+esc(age(p.reviewed_at)):''}</div></div><small>${esc(age(p.created))}</small></div>`).join(''):'<div class="empty">No payment submissions yet</div>';
+  }catch(error){if(epoch===S.epoch&&!billingSessionError(error))notify(error.message,true)}
+}
+
+function paymentSettingsControls(){
+  const disabled=!S.me||S.me.role!=='admin'||P.busy||P.loading;
+  if($('savePaymentSettings'))$('savePaymentSettings').disabled=disabled;
+  if($('reloadPaymentSettings'))$('reloadPaymentSettings').disabled=disabled;
+}
+function paymentSettingsMessage(text,error=false){$('paymentSettingsMessage').textContent=text;$('paymentSettingsMessage').classList.toggle('danger-txt',error);}
+function populatePaymentSettings(settings){
+  const f=$('paymentSettingsForm');
+  for(const key of ['jazzcash','easypaisa','nayapay','meezan']){
+    const row=settings[key]||{},field=['jazzcash','easypaisa'].includes(key)?'number':'iban';
+    f.elements[key+'_enabled'].checked=row.enabled===true;
+    f.elements[key+'_'+field].value=row[field]||'';
+    f.elements[key+'_account_title'].value=row.account_title||'';
+  }
+  f.elements.bank_enabled.checked=settings.bank?.enabled===true;f.elements.bank_details.value=settings.bank?.details||'';
+  f.elements.stripe_enabled.checked=settings.stripe?.enabled===true;f.elements.stripe_url.value=settings.stripe?.url||'';
+  f.elements.whatsapp.value=settings.whatsapp||'';
+}
+function readPaymentSettings(){
+  const f=$('paymentSettingsForm'),settings={};
+  for(const key of ['jazzcash','easypaisa','nayapay','meezan']){
+    const field=['jazzcash','easypaisa'].includes(key)?'number':'iban';
+    settings[key]={enabled:!!f.elements[key+'_enabled'].checked,[field]:f.elements[key+'_'+field].value.trim(),account_title:f.elements[key+'_account_title'].value.trim()};
+  }
+  settings.bank={enabled:!!f.elements.bank_enabled.checked,details:f.elements.bank_details.value.trim()};
+  settings.stripe={enabled:!!f.elements.stripe_enabled.checked,url:f.elements.stripe_url.value.trim()};settings.whatsapp=f.elements.whatsapp.value.trim();return settings;
+}
+async function loadPaymentSettings(force=false){
+  if(S.me?.role!=='admin'||P.busy||P.loading||(!force&&(P.settings||P.dirty)))return;
+  const epoch=S.epoch,accountId=S.me.id,revision=P.revision,loadRevision=++P.loadRevision;
+  P.loading=true;paymentSettingsControls();paymentSettingsMessage('Loading saved payment destinations…');
+  try{
+    const response=await api('/api/admin/payment-settings?expected_user_id='+encodeURIComponent(accountId));
+    if(epoch!==S.epoch||S.me?.id!==accountId||S.me.role!=='admin'||loadRevision!==P.loadRevision)return;
+    P.settings=response.settings;
+    if(revision===P.revision){populatePaymentSettings(response.settings);P.dirty=false;}
+    const warnings=Array.isArray(response.warnings)?response.warnings.filter(value=>typeof value==='string').join(' '):'';
+    paymentSettingsMessage(revision===P.revision?(warnings||'Saved receiving accounts loaded. Payments require independent settlement verification.'):'Saved settings loaded. Your newer edits remain unsaved.');
+  }catch(error){if(epoch===S.epoch){if(!billingSessionError(error))paymentSettingsMessage(error.message,true);if(error.status===403){resetSession();window.location.reload();}}}
+  finally{if(epoch===S.epoch&&loadRevision===P.loadRevision){P.loading=false;paymentSettingsControls();}}
+}
+if($('paymentSettingsForm')){
+  const form=$('paymentSettingsForm');
+  const changed=()=>{P.revision++;P.dirty=true;paymentSettingsMessage('Unsaved payment destination changes.');};
+  form.addEventListener('input',changed);form.addEventListener('change',changed);
+  $('reloadPaymentSettings').onclick=()=>loadPaymentSettings(true);
+  form.onsubmit=async event=>{
+    event.preventDefault();if(S.me?.role!=='admin'||P.busy||P.loading)return;
+    const epoch=S.epoch,accountId=S.me.id,revision=P.revision,settings=readPaymentSettings();
+    P.busy=true;paymentSettingsControls();paymentSettingsMessage('Saving receiving accounts…');
+    try{
+      const response=await post('/api/admin/payment-settings',{settings,expected_user_id:accountId});
+      if(epoch!==S.epoch||S.me?.id!==accountId||S.me.role!=='admin')return;
+      P.settings=response.settings;
+      if(revision===P.revision){populatePaymentSettings(response.settings);P.dirty=false;}
+      const warnings=Array.isArray(response.warnings)?response.warnings.filter(value=>typeof value==='string').join(' '):'';
+      paymentSettingsMessage(revision===P.revision?(warnings||'Payment destinations saved. No receipt was approved or subscription changed.'):'Earlier destinations saved. Your newer edits are still unsaved.');
+      S.refreshRevision++;await refresh();
+    }catch(error){if(epoch===S.epoch){if(!billingSessionError(error))paymentSettingsMessage(error.message,true);if(error.status===403){resetSession();window.location.reload();}}}
+    finally{if(epoch===S.epoch){P.busy=false;paymentSettingsControls();}}
+  };
 }
 
 async function loadTeam(){
   if(S.me?.role!=='admin')return;
+  const epoch=S.epoch,accountId=S.me.id,revision=++P.teamRevision;
+  void loadPaymentSettings();
   try{
     const [x,payData]=await Promise.all([api('/api/team'),api('/api/admin/payments')]);
+    if(epoch!==S.epoch||S.me?.id!==accountId||S.me.role!=='admin'||revision!==P.teamRevision)return;
     S.team=x.members;
     const b=x.billing_summary||{};
     $('billingSummaryBox').innerHTML=`<b>SaaS Billing & Team Overview:</b> ${esc(b.free_team_count||0)} Founder Accounts (maximum 2) • ${esc(b.paid_subscribers_count||0)} Commercial Paid Users • <b>Pending Payment Approvals: ${esc(b.pending_payments||0)}</b> • <b>Estimated Monthly Revenue (MRR): $${esc(b.estimated_mrr_usd||0)}/mo</b>`;
-    $('adminPaymentsList').innerHTML=payData.payments.length?payData.payments.map(p=>`<div class="member-row"><div><b>${esc(p.user_name)} (${esc(p.user_email)})</b> <span class="tag ${p.status==='approved'?'green':'orange'}">${esc(p.status.toUpperCase())}</span><small>${esc(p.method)} · ${esc(p.currency)} ${esc(p.amount)} · TID: <b>${esc(p.transaction_id)}</b> ${p.sender_phone?'· Phone: '+esc(p.sender_phone):''} ${p.notes?'· '+esc(p.notes):''}</small></div><div class="member-actions">${p.status==='pending'?`<button class="primary" data-paydecide="${esc(p.id)}" data-act="approve">✓ Approve & Activate</button><button class="secondary danger" data-paydecide="${esc(p.id)}" data-act="reject">✕ Reject</button>`:`<small>${esc(age(p.created))}</small>`}</div></div>`).join(''):'<div class="empty">No payment requests submitted yet</div>';
+    $('adminPaymentsList').innerHTML=payData.payments.length?payData.payments.map(p=>`<div class="member-row"><div><b>${esc(p.user_name)} (${esc(p.user_email)})</b> <span class="tag ${p.status==='approved'?'green':'orange'}">${esc(p.status.toUpperCase())}</span><small>${esc(planName(p.plan_tier))} · ${esc(p.method)} · ${esc(p.currency)} ${esc(p.amount)} · TID: <b>${esc(p.transaction_id)}</b> ${p.sender_phone?'· Phone: '+esc(p.sender_phone):''} ${p.notes?'· '+esc(p.notes):''} · Submitted: ${esc(age(p.created))}${p.reviewed_at?' · Reviewed: '+esc(age(p.reviewed_at)):''}</small></div><div class="member-actions">${p.status==='pending'?`<button class="primary" data-paydecide="${esc(p.id)}" data-act="approve">✓ Approve & Activate</button><button class="secondary danger" data-paydecide="${esc(p.id)}" data-act="reject">✕ Reject</button>`:`<small>${esc(age(p.created))}</small>`}</div></div>`).join(''):'<div class="empty">No payment requests submitted yet</div>';
     $('teamList').innerHTML=x.members.map(m=>{
       const isFree=m.plan_tier==='free_team';
-      return `<div class="member-row"><div><b>${esc(m.name)}</b> <span class="tag ${isFree?'green':'orange'}">${isFree?'FOUNDER (free)':`${esc(planName(m.plan_tier))} ($${planPrice(m.plan_tier)}/mo · ${esc(m.subscription_status)})`}</span><small>${esc(m.email)} · ${m.connected?'Freelancer Connected':'Not Connected'} · Auto-Bid: ${m.auto_admin_allowed&&m.auto_requested?'ON':'OFF'}</small></div><div class="member-actions"><button class="secondary" data-inspect="${esc(m.id)}">Activity</button><button class="secondary" data-toggleplan="${esc(m.id)}" data-tier="${m.plan_tier==='paid_starter'?'paid_pro':'paid_starter'}">${m.plan_tier==='paid_starter'?'Switch to Pro ($40)':'Switch to Starter ($10)'}</button>${m.id===S.me.id?'':`<button class="secondary" data-permission="${esc(m.id)}" data-value="${m.auto_admin_allowed?'0':'1'}">${m.auto_admin_allowed?'Pause Auto':'Allow Auto'}</button><button class="secondary" data-active="${esc(m.id)}" data-value="${m.active?'0':'1'}">${m.active?'Disable':'Enable'}</button>`}</div></div>`;
+      return `<div class="member-row"><div><b>${esc(m.name)}</b> <span class="tag ${isFree?'green':'orange'}">${isFree?'FOUNDER (free)':`${esc(planName(m.plan_tier))} ($${planPrice(m.plan_tier)}/mo · ${esc(m.subscription_status)})`}</span><small>${esc(m.email)} · ${m.subscription_started_at?'Activated: '+esc(age(m.subscription_started_at))+' · ':''}${m.subscription_expires?'Expires: '+esc(age(m.subscription_expires))+' · ':''}${m.connected?'Freelancer Connected':'Not Connected'} · Auto-Bid: ${m.auto_admin_allowed&&m.auto_requested?'ON':'OFF'}</small></div><div class="member-actions"><button class="secondary" data-inspect="${esc(m.id)}">Activity</button><button class="secondary" data-toggleplan="${esc(m.id)}" data-tier="${m.plan_tier==='paid_starter'?'paid_pro':'paid_starter'}">${m.plan_tier==='paid_starter'?'Switch to Pro ($40)':'Switch to Starter ($10)'}</button>${m.id===S.me.id?'':`<button class="secondary" data-permission="${esc(m.id)}" data-value="${m.auto_admin_allowed?'0':'1'}">${m.auto_admin_allowed?'Pause Auto':'Allow Auto'}</button><button class="secondary" data-active="${esc(m.id)}" data-value="${m.active?'0':'1'}">${m.active?'Disable':'Enable'}</button>`}</div></div>`;
     }).join('')||'<div class="empty">No members</div>';
   }catch(e){notify(e.message,true)}
 }
@@ -708,23 +817,25 @@ if($('testChatBtn')){
 }
 
 if($('paymentForm')){
-  $('paymentForm').onsubmit=async e=>{
-    e.preventDefault();
-    const f=e.currentTarget;
+  $('paymentForm').onsubmit=async event=>{
+    event.preventDefault();if(!S.me||P.paymentBusy)return;
+    const f=event.currentTarget,epoch=S.epoch,accountId=S.me.id;
+    const reference=f.elements.transaction_id.value,notes=f.elements.notes.value;
+    P.paymentBusy=true;f.querySelector?.('button[type="submit"]')?.toggleAttribute('disabled',true);
     try{
       await post('/api/billing/submit',{
-        plan_tier:f.elements.plan_tier.value,
-        method:f.elements.method.value,
-        amount:planPrice(f.elements.plan_tier.value),
-        currency:'USD',
-        transaction_id:f.elements.transaction_id.value,
-        sender_phone:f.elements.sender_phone.value,
-        notes:f.elements.notes.value
+        plan_tier:f.elements.plan_tier.value,method:f.elements.method.value,
+        amount:planPrice(f.elements.plan_tier.value),currency:'USD',
+        transaction_id:reference,sender_phone:f.elements.sender_phone.value,notes,
+        expected_user_id:accountId,
       });
-      f.elements.transaction_id.value='';f.elements.notes.value='';
-      notify('Payment receipt submitted for administrator verification.');
+      if(epoch!==S.epoch||S.me?.id!==accountId)return;
+      if(f.elements.transaction_id.value===reference)f.elements.transaction_id.value='';
+      if(f.elements.notes.value===notes)f.elements.notes.value='';
+      notify('Payment reference submitted. An administrator must verify settled funds before activation.');
       await loadBilling();
-    }catch(ex){notify(ex.message,true)}
+    }catch(error){if(epoch===S.epoch&&!billingSessionError(error))notify(error.message,true)}
+    finally{if(epoch===S.epoch){P.paymentBusy=false;const configured=paymentChannels(S.payment_methods||{}).some(channel=>channel.id!=='stripe'||safePaymentUrl(channel.details));f.querySelector?.('button[type="submit"]')?.toggleAttribute('disabled',!configured);}}
   };
 }
 
@@ -749,11 +860,19 @@ document.addEventListener('click',async e=>{
   if(!target)return;
   if(target.dataset.job){openJob(target.dataset.job);return}
   if(target.dataset.inspect){await inspectMember(target.dataset.inspect);return}
+  if(target.dataset.paydecide){
+    if(S.me?.role!=='admin'||P.decisionBusy)return;
+    const epoch=S.epoch,accountId=S.me.id;P.decisionBusy=true;target.disabled=true;
+    try{
+      await post(`/api/admin/payments/${target.dataset.paydecide}/decide`,{action:target.dataset.act,expected_user_id:accountId});
+      if(epoch!==S.epoch||S.me?.id!==accountId||S.me.role!=='admin')return;
+      notify(target.dataset.act==='approve'?'Payment verified and subscription activated.':'Payment request rejected.');
+      await loadTeam();
+    }catch(error){if(epoch===S.epoch&&!billingSessionError(error))notify(error.message,true)}
+    finally{if(epoch===S.epoch){P.decisionBusy=false;target.disabled=false;}}
+    return;
+  }
   try{
-    if(target.dataset.paydecide){
-      await post(`/api/admin/payments/${target.dataset.paydecide}/decide`,{action:target.dataset.act});
-      notify(`Payment ${target.dataset.act==='approve'?'Approved & Subscription Activated':'Rejected'}!`);
-    }
     if(target.dataset.toggleplan){
       const newTier=target.dataset.tier;
       await post(`/api/team/${target.dataset.toggleplan}/plan`,{plan_tier:newTier,subscription_status:'active',monthly_fee:planPrice(newTier)});

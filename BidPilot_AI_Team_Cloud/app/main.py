@@ -9,7 +9,7 @@ from fastapi import FastAPI, Request, Depends, HTTPException, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from .db import (
     SessionLocal, init_db, User, Connection, Job, Bid, ChatGreeted, PaymentRequest, Audit,
     APP_ENV, SESSION_SECRET, SECURE_COOKIES, PLATFORM_AUTO, ALLOW_PROD, SCAN_SECONDS,
@@ -21,6 +21,9 @@ from .logic import score_job, score_for_user, make_proposal, auto_eligible, pric
 from .integrations import get_client, scan_for_user, extract_skills, ai_proposal, ai_review, ai_chat_reply, test_ai_connection, resolve_ai_credentials, fetch_live_bids
 from .freelancer import FreelancerAPI, FreelancerError
 from .advanced import AdvancedConfigError, evaluate_filters, load_advanced, schedule_allows
+from .billing_lifecycle import (PERIOD_LABEL, BILLING_TIMEZONE, subscription_start, renewal_expiry,
+                                billing_period_start, expire_due_subscriptions, expire_subscriptions)
+from .payment_settings import public_payment_methods, payment_method_configured, install_payment_settings_routes
 
 log = logging.getLogger('bidpilot')
 DUMMY_PASSWORD_HASH = hash_password(secrets.token_urlsafe(32))
@@ -30,6 +33,7 @@ ROOT = os.path.abspath(os.path.dirname(__file__))
 @asynccontextmanager
 async def lifespan(app):
     init_db()
+    expire_subscriptions()
     yield
 
 
@@ -146,10 +150,19 @@ class PaymentSubmitIn(InputModel):
     currency: str = Field(default='USD', max_length=15)
     sender_phone: str = Field(default='', max_length=60)
     notes: str = Field(default='', max_length=500)
+    expected_user_id: int | None = Field(default=None, ge=1, strict=True)
+
+    @field_validator('notes')
+    @classmethod
+    def no_credentials_in_receipt(cls, value):
+        if re.search(r'(?i)\b(?:password|pin|otp|api[_ -]?key|access[_ -]?token)\s*[:=]\s*\S+', value):
+            raise ValueError('Do not include passwords, PINs, OTPs or API keys in payment notes')
+        return value
 
 
 class PaymentDecisionIn(InputModel):
-    action: str
+    action: Literal['approve', 'reject']
+    expected_user_id: int | None = Field(default=None, ge=1, strict=True)
 
 
 class AIKeysIn(InputModel):
@@ -390,6 +403,8 @@ def logout(request: Request, response: Response, uid: int = Depends(mutate)):
 @app.get('/api/me')
 def me(uid: int = Depends(current)):
     with SessionLocal() as s:
+        expire_due_subscriptions(s, user_id=uid)
+        s.commit()
         u = s.get(User, uid)
         c = s.query(Connection).filter_by(user_id=uid).first()
         creds = resolve_ai_credentials(u)
@@ -404,13 +419,7 @@ def me(uid: int = Depends(current)):
             'platform_auto_authorized': PLATFORM_AUTO,
             'ai_enabled': bool(active_providers),
             'ai_provider': ai_label,
-            'payment_methods': {
-                'jazzcash': os.getenv('PAYMENT_JAZZCASH', ''),
-                'easypaisa': os.getenv('PAYMENT_EASYPAISA', ''),
-                'bank': os.getenv('PAYMENT_BANK', ''),
-                'stripe_url': os.getenv('PAYMENT_STRIPE_URL', ''),
-                'whatsapp': os.getenv('PAYMENT_WHATSAPP', '')
-            }
+            'payment_methods': public_payment_methods(s),
         }
 
 
@@ -470,8 +479,12 @@ def csrf(request: Request, uid: int = Depends(current)):
 
 
 @app.get('/api/billing')
-def my_billing(uid: int = Depends(current)):
+def my_billing(expected_user_id: int | None = None, uid: int = Depends(current)):
+    if expected_user_id is not None and expected_user_id != uid:
+        raise HTTPException(409, 'Account changed. Reload before reviewing billing.')
     with SessionLocal() as s:
+        expire_due_subscriptions(s, user_id=uid)
+        s.commit()
         u = s.get(User, uid)
         reqs = s.query(PaymentRequest).filter_by(user_id=uid).order_by(PaymentRequest.id.desc()).limit(25).all()
         return {
@@ -479,7 +492,11 @@ def my_billing(uid: int = Depends(current)):
             'subscription_status': u.subscription_status,
             'monthly_fee': u.monthly_fee,
             'subscription_expires': u.subscription_expires,
+            'subscription_started_at': subscription_start(u),
+            'billing_period_label': PERIOD_LABEL,
+            'billing_timezone': BILLING_TIMEZONE,
             'subscription_active': subscription_active(u),
+            'payment_methods': public_payment_methods(s),
             'plans': [{'plan_tier': 'paid_starter', 'amount': 10, 'monthly_bid_limit': 150}, {'plan_tier': 'paid_pro', 'amount': 40, 'monthly_bid_limit': 0}],
             'payments': [
                 {
@@ -491,7 +508,10 @@ def my_billing(uid: int = Depends(current)):
                     'currency': r.currency,
                     'sender_phone': r.sender_phone,
                     'status': r.status,
-                    'created': r.created
+                    'created': r.created,
+                    'reviewed_at': r.reviewed_at,
+                    'access_starts_at': r.access_starts_at,
+                    'access_expires_at': r.access_expires_at,
                 }
                 for r in reqs
             ]
@@ -500,10 +520,9 @@ def my_billing(uid: int = Depends(current)):
 
 @app.post('/api/billing/submit')
 def submit_payment(x: PaymentSubmitIn, uid: int = Depends(mutate)):
-    methods = {'jazzcash': 'PAYMENT_JAZZCASH', 'easypaisa': 'PAYMENT_EASYPAISA', 'bank': 'PAYMENT_BANK', 'stripe': 'PAYMENT_STRIPE_URL'}
+    if x.expected_user_id is not None and x.expected_user_id != uid:
+        raise HTTPException(409, 'Account changed. Reload before submitting payment.')
     method = x.method.strip().lower()
-    if method not in methods or not os.getenv(methods[method], '').strip():
-        raise HTTPException(400, 'Payment method is not configured. Contact the administrator.')
     if x.currency.strip().upper() != 'USD' or abs(x.amount - plan_config(x.plan_tier)['monthly_fee']) > 0.001:
         raise HTTPException(400, 'Submit the selected plan price in USD. Administrator must independently verify settlement/conversion.')
     tid = x.transaction_id.strip()
@@ -511,6 +530,8 @@ def submit_payment(x: PaymentSubmitIn, uid: int = Depends(mutate)):
         raise HTTPException(400, 'A transaction reference is required')
     with SessionLocal() as s:
         lock_user(s, uid)
+        if not payment_method_configured(s, method):
+            raise HTTPException(400, 'Payment method is not configured. Contact the administrator.')
         if s.query(PaymentRequest).filter_by(method=method, transaction_id=tid).first():
             raise HTTPException(409, 'This payment reference has already been submitted')
         if s.query(PaymentRequest).filter_by(user_id=uid, status='pending').count() >= 3:
@@ -532,6 +553,8 @@ def submit_payment(x: PaymentSubmitIn, uid: int = Depends(mutate)):
 def admin_payments(uid: int = Depends(current)):
     admin_only(uid)
     with SessionLocal() as s:
+        expire_due_subscriptions(s)
+        s.commit()
         users = {u.id: u for u in s.query(User).all()}
         reqs = s.query(PaymentRequest).order_by(PaymentRequest.id.desc()).limit(60).all()
         return {
@@ -549,7 +572,11 @@ def admin_payments(uid: int = Depends(current)):
                     'sender_phone': r.sender_phone,
                     'notes': r.notes,
                     'status': r.status,
-                    'created': r.created
+                    'created': r.created,
+                    'reviewed_at': r.reviewed_at,
+                    'reviewed_by': r.reviewed_by,
+                    'access_starts_at': r.access_starts_at,
+                    'access_expires_at': r.access_expires_at,
                 }
                 for r in reqs
             ]
@@ -558,6 +585,8 @@ def admin_payments(uid: int = Depends(current)):
 
 @app.post('/api/admin/payments/{payment_id}/decide')
 def admin_decide_payment(payment_id: int, x: PaymentDecisionIn, uid: int = Depends(mutate)):
+    if x.expected_user_id is not None and x.expected_user_id != uid:
+        raise HTTPException(409, 'Account changed. Reload before reviewing payment.')
     admin_only(uid)
     if x.action not in ('approve', 'reject'):
         raise HTTPException(400, 'Choose approve or reject')
@@ -565,34 +594,45 @@ def admin_decide_payment(payment_id: int, x: PaymentDecisionIn, uid: int = Depen
         pr = s.query(PaymentRequest).filter_by(id=payment_id).with_for_update().first()
         if not pr:
             raise HTTPException(404, 'Payment request not found')
+        u = s.get(User, pr.user_id)
+        if not u:
+            raise HTTPException(404, 'Payment account no longer exists')
         # Conditional update is also atomic on SQLite, where FOR UPDATE is ignored.
         changed = s.query(PaymentRequest).filter_by(id=payment_id, status='pending').update(
-            {'status': 'approved' if x.action == 'approve' else 'rejected', 'reviewed_at': int(time.time())}, synchronize_session=False)
+            {'status': 'approved' if x.action == 'approve' else 'rejected', 'reviewed_at': int(time.time()),
+             'reviewed_by': uid}, synchronize_session=False)
         if changed != 1:
             raise HTTPException(409, 'This payment has already been reviewed')
-        u = s.get(User, pr.user_id)
-        if u and x.action == 'approve':
+        if x.action == 'approve':
             lock_user(s, u.id)
+            u = s.get(User, pr.user_id)
+            expire_due_subscriptions(s, user_id=u.id)
             if pr.plan_tier not in ('paid_starter', 'paid_pro') or pr.currency != 'USD' or abs(pr.amount - plan_config(pr.plan_tier)['monthly_fee']) > 0.001:
                 raise HTTPException(400, 'Payment does not match an available plan')
             if u.plan_tier == 'free_team':
                 raise HTTPException(400, 'Founder accounts do not require payment')
             if subscription_active(u) and u.plan_tier == pr.plan_tier:
-                u.subscription_expires = max(int(time.time()), u.subscription_expires) + 30 * 86400
+                pr.access_starts_at = max(int(time.time()), u.subscription_expires)
+                u.subscription_expires = renewal_expiry(u)
                 u.subscription_status = 'active'
             else:
                 apply_plan(u, pr.plan_tier, 'active')
-            u.auto_admin_allowed = True
-            audit(s, u.id, 'subscription_activated', f'Payment #{pr.id} manually verified by admin {uid}; 30-day access')
+                pr.access_starts_at = subscription_start(u)
+            pr.access_expires_at = u.subscription_expires
+            audit(s, u.id, 'subscription_activated', f'Payment #{pr.id} manually verified by admin {uid}; calendar-month access')
         audit(s, uid, 'payment_reviewed', f'Payment #{pr.id} -> {x.action}')
         s.commit()
-        return {'ok': True, 'status': 'approved' if x.action == 'approve' else 'rejected'}
+        return {'ok': True, 'status': 'approved' if x.action == 'approve' else 'rejected',
+                'subscription_started_at': subscription_start(u), 'subscription_expires': u.subscription_expires,
+                'billing_period_label': PERIOD_LABEL}
 
 
 @app.get('/api/team')
 def team(uid: int = Depends(current)):
     admin_only(uid)
     with SessionLocal() as s:
+        expire_due_subscriptions(s)
+        s.commit()
         members = [public_user(u, s.query(Connection).filter_by(user_id=u.id).first()) for u in s.query(User).order_by(User.id)]
         free_count = sum(1 for m in members if m.get('plan_tier') == 'free_team')
         paid_count = sum(1 for m in members if m.get('plan_tier') != 'free_team')
@@ -991,8 +1031,7 @@ def bid_limits(s, u):
     if consumed.filter(Bid.updated >= now - 86400).count() >= u.max_daily:
         raise HTTPException(429, 'Daily bid limit reached')
     quota = plan_config(u.plan_tier)['monthly_bid_limit']
-    anchor = int(u.billing_period_started or now)
-    period_start = anchor + max(0, (now - anchor) // (30 * 86400)) * (30 * 86400)
+    period_start = billing_period_start(u, now=now)
     if quota and consumed.filter(Bid.updated >= period_start).count() >= quota:
         raise HTTPException(403, 'Your plan bid allowance has been used. Renew or upgrade your subscription.')
 
@@ -1644,3 +1683,6 @@ from .support import install_support_routes
 install_support_routes(app, current, mutate)
 from .live_status import install_live_routes
 install_live_routes(app, current)
+install_payment_settings_routes(app, current, mutate, admin_only)
+from .account_security import install_account_security_routes
+install_account_security_routes(app, current, mutate)

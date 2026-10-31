@@ -58,6 +58,34 @@ vm.runInContext(source,sandbox);
   S.me={...S.me,subscription_active:true,subscription_status:'trial',auto_requested:true,auto_admin_allowed:true,connected:true};S.platform_auto=true;
   renderStatus();
   if(!$('autoStatus').textContent.includes('Enabled'))throw Error('Active trial falsely paused');
+  // Configuration readiness explains each gate without enabling a checkbox or
+  // claiming that a worker/API has actually sent bids. Operator commands stay
+  // scoped to the admin's guidance.
+  const readyAutoUser={...S.me,role:'admin',auto_requested:true,auto_admin_allowed:true,connected:true,api_pause_reason:''};
+  S.me={...readyAutoUser};S.platform_auto=false;
+  $('settingsForm').elements.auto_requested.checked=false;
+  renderStatus();
+  if($('autoStatus').textContent!=='Server switch OFF')throw Error('Missing server-off status');
+  if(!$('autoWarning').textContent.includes('configure_autobid.py enable')||!$('autoWarning').textContent.includes('restart both'))throw Error('Admin missing activation and restart guidance');
+  if($('settingsForm').elements.auto_requested.checked)throw Error('Guidance silently enabled Auto-Pilot');
+  S.me.role='member';renderStatus();
+  if($('autoWarning').textContent.includes('configure_autobid.py')||!$('autoWarning').textContent.includes('operator controls'))throw Error('Operator command shown to customer');
+  S.platform_auto=true;S.me={...readyAutoUser,auto_requested:false};renderStatus();
+  if($('autoStatus').textContent!=='Auto-Pilot OFF'||!$('autoWarning').textContent.includes('save these settings'))throw Error('Personal opt-in step missing');
+  S.me={...readyAutoUser,auto_admin_allowed:false};renderStatus();
+  if($('autoStatus').textContent!=='Paused by administrator')throw Error('Admin pause not distinguished');
+  S.me={...readyAutoUser,subscription_active:false};renderStatus();
+  if($('autoStatus').textContent!=='Subscription inactive')throw Error('Inactive subscription not distinguished');
+  S.me={...readyAutoUser,connected:false};renderStatus();
+  if($('autoStatus').textContent!=='Connect Freelancer')throw Error('Missing connection not distinguished');
+  S.me={...readyAutoUser,api_pause_reason:'auth_rejected'};renderStatus();
+  if($('autoStatus').textContent!=='Freelancer access paused'||!$('autoWarning').textContent.includes('reconnect'))throw Error('Access pause not explained');
+  S.me={...readyAutoUser,api_pause_reason:'rate_limited',api_cooldown_until:Math.floor(Date.now()/1000)+300};renderStatus();
+  if($('autoStatus').textContent!=='API cooldown'||!$('autoWarning').textContent.includes('rate-limit pause'))throw Error('Cooldown not explained');
+  S.me.connected=false;renderStatus();
+  if($('autoStatus').textContent!=='API cooldown')throw Error('Disconnect hides the persistent provider wait');
+  S.me={...readyAutoUser};renderStatus();
+  if($('autoStatus').textContent!=='Enabled (worker required)'||!$('autoWarning').textContent.includes('check the worker heartbeat'))throw Error('Ready preference falsely claims worker or API success');
   initialize=async()=>{};
   $('authToggle').onclick();
   if(!$('registerName').required||$('loginPassword').minLength!==12)throw Error('Registration constraints missing');
@@ -86,6 +114,7 @@ vm.runInContext(source,sandbox);
  assert.equal(vm.runInContext('S.nav',sandbox),'overview');
  assert.equal(vm.runInContext('S.team.length',sandbox),0);
  assert.equal(node('teamList').textContent,'');
+ assert.equal(node('autoWarning').textContent,'');
  release({ok:true,status:200,json:async()=>({private:'previous account'})});
  await assert.rejects(pending,/Session changed/);
  // A slow generated proposal must preserve text and price typed while it was running.

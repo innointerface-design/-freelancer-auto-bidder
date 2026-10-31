@@ -1,5 +1,7 @@
 # BidPilot AI v4.1 — Gemini aur OpenAI AI Chat
 
+**Latest update:** auto-bidding ON karne ka operator helper [v4.2 update](V4_2_AUTOBID_ROMAN_URDU.md) mein hai. Naya chatbot barqarar hai.
+
 Naya general AI chatbot ab app mein shamil hai. Sidebar ka **AI Chat** kholein. **General assistant** mein aam sawal, writing, coding, translation aur ideas pooch sakte hain. **App help** mein BidPilot setup, API errors, billing aur bidding settings ki guidance milti hai. Existing live worker, filters, packages aur dark/purple design preserve rehte hain.
 
 ## Istemaal

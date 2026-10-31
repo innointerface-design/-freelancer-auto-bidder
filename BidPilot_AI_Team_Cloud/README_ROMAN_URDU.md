@@ -1,5 +1,9 @@
 # BidPilot AI — Ubuntu setup aur zaroori baatein
 
+**Latest v4.3:** receiving payment accounts, admin verification, automatic monthly expiry aur password/session controls [V4_3_BILLING_SECURITY_ROMAN_URDU.md](V4_3_BILLING_SECURITY_ROMAN_URDU.md) mein hain. Password payment ke liye admin ko na bhejein.
+
+**Latest v4.2:** automatic bidding ON/OFF karne ke operator command aur complete steps [V4_2_AUTOBID_ROMAN_URDU.md](V4_2_AUTOBID_ROMAN_URDU.md) mein hain. Server switch ke baad web/worker restart aur apne account ka Auto-Pilot Save karna zaroori hai.
+
 **Latest v4.1 — 31 October 2026:** naya general Gemini/OpenAI chatbot, App help mode aur update commands [V4_1_CHATBOT_ROMAN_URDU.md](V4_1_CHATBOT_ROMAN_URDU.md) mein hain. Sidebar **AI Chat** kholein. Live AI ke liye valid saved key aur active subscription chahiye.
 
 **Latest v4 — 31 October 2026:** live Freelancer refresh, worker status, automatic bidding timing aur current WSL update commands ke liye [V4_FEATURES_ROMAN_URDU.md](V4_FEATURES_ROMAN_URDU.md) dekhein. Existing dark/purple design aur v3 features barqarar hain. Latest requirements install karein; web aur worker alag processes hain.
@@ -12,7 +16,7 @@ Poore commands aur production details `README.md` mein hain. Is ZIP mein koi cha
 - **Pro: $40 / 30 din** — monthly app quota nahi; Freelancer ke limits aur aapke hourly/daily controls phir bhi apply hotay hain.
 - **Do founders free** — owner/admin aur optional second founder. `setup_local.py` par emails/passwords set karein. Public signup se koi admin/free access nahi le sakta.
 
-Payment screen mein transaction ID submit karna payment verification nahi hai. Admin apne asli JazzCash/EasyPaisa/bank/Stripe account mein payment confirm karne ke baad approve kare. Pehli approval se 30 din activate hotay hain. Wohi active tier renew karne se expiry mein 30 din add hotay hain; current quota window reset nahi hoti. Tier change par naya 30-day period start hota hai. Automatic recurring payment ya verified Stripe webhook is version mein nahi hai. Public signup par automatic email verification ya password-reset email bhi nahi hai.
+Payment screen mein transaction ID submit karna payment verification nahi hai. Admin apne asli JazzCash/Easypaisa/bank/Stripe account mein settlement confirm karne ke baad approve kare. Naye grant ki activation aur agle calendar month ki expiry record hoti hai. Wohi active tier renew karne se next month expiry add hoti hai; current quota window reset nahi hoti. Existing expiry dates aur purane quota anchors preserve rehte hain. Automatic recurring charges ya verified merchant webhooks is version mein nahi hain. Public signup par automatic email verification ya password-reset email bhi nahi hai. Customer apna password admin ko nahi bhejta; account Security panel se khud change kar sakta hai.
 
 ## Ubuntu par local test
 

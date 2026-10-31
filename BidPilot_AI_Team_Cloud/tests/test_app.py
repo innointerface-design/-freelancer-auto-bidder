@@ -273,13 +273,15 @@ def test_renewal_extends_expiry_without_resetting_allowance(app_client):
     with sessions() as s:
         u = s.get(db.User, uid)
         before, anchor = u.subscription_expires, u.billing_period_started
+        from app.billing_lifecycle import renewal_expiry
+        expected = renewal_expiry(u)
         payment = db.PaymentRequest(user_id=uid, method='bank', transaction_id='renew-1', amount=10, currency='USD', plan_tier='paid_starter')
         s.add(payment); s.commit(); pid = payment.id
     headers = login(c)
     assert c.post(f'/api/admin/payments/{pid}/decide', headers=headers, json={'action': 'approve'}).status_code == 200
     with sessions() as s:
         u = s.get(db.User, uid)
-        assert u.subscription_expires == before + 30 * 86400
+        assert u.subscription_expires == expected and u.subscription_expires > before
         assert u.billing_period_started == anchor
 
 

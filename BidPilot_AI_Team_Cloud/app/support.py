@@ -54,7 +54,8 @@ APP_KNOWLEDGE = (
     'account eligibility before live automation. Freelancer User Agreement section 33 addresses express '
     'written permission for automated access, including API access; API Terms section 4.9 prohibits '
     'circumventing limits. Official API usage and app controls do not guarantee against restrictions. '
-    'Starter costs USD10 per30days and allows150 app bid attempts; Pro costs USD40 per30days without '
+    'New paid grants use calendar-month access in Asia/Karachi, with activation and expiry dates recorded. '
+    'Starter costs USD10 per calendar month and allows150 app bid attempts; Pro costs USD40 per calendar month without '
     'an app monthly quota. Both retain hourly/daily limits and Freelancer account restrictions. '
     'Two founder accounts, including the owner, are free. Submitted payment references require manual '
     'operator verification; the chat cannot activate subscriptions, approve a receipt or issue refunds. '
@@ -239,7 +240,7 @@ def _local_reply(question):
                 'A key record ID or masked value cannot replace the secret. Select Save, then Test saved AI keys; '
                 'this chat cannot determine whether a credential is valid and does not need to see it.')
     if any(term in text for term in ('payment', 'billing', 'paid', 'package', 'subscription', 'refund', 'paise')):
-        return ('Starter is $10 per 30 days with 150 app bid attempts; Pro is $40 per 30 days with no app monthly '
+        return ('Starter is $10 per calendar month with 150 app bid attempts; Pro is $40 per calendar month with no app monthly '
                 'quota. Freelancer limits still apply. Submit your receipt in Billing; the operator must '
                 'verify actual settlement before activation. This chat cannot approve payments or issue refunds.')
     if any(term in text for term in ('backup', 'restore', 'export', 'import')):

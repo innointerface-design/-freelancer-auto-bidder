@@ -23,7 +23,7 @@ jobs:
       - run: pytest -q
 
   bidpilot:
-    name: BidPilot v4.1 checks (Python 3.12)
+    name: BidPilot v4.3 checks (Python 3.12)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -41,4 +41,5 @@ jobs:
       - run: node --check app/static/app.js
       - run: node --check app/static/live.js
       - run: node --check app/static/support.js
+      - run: node --check app/static/security.js
       - run: python -m pytest -q

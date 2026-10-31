@@ -10,12 +10,14 @@ from sqlalchemy.exc import IntegrityError
 
 from .db import init_db, SessionLocal, User, Connection, WorkerHeartbeat, PLATFORM_AUTO, SCAN_SECONDS
 from .main import perform_scan, run_autobid_cycle, run_autochat_cycle
+from .billing_lifecycle import expire_subscriptions
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger('bidpilot-worker')
 HEARTBEAT_SECONDS = 10
 MAX_CONCURRENT_ACCOUNTS = 4
 PENDING_CHECK_SECONDS = 5
+EXPIRY_CHECK_SECONDS = 30
 
 
 def active_accounts(now):
@@ -56,6 +58,7 @@ def auto_for_user(uid):
 def once():
     """Single sequential pass, useful for operator diagnostics and existing callers."""
     now = int(time.time())
+    expire_subscriptions(now=now)
     for uid, last_scan, claim_until, _, _ in active_accounts(now):
         if int(claim_until or 0) > now:
             continue
@@ -85,6 +88,7 @@ class WorkerScheduler:
         self._retry_until = {}
         self._last_dispatched = {}
         self._heartbeat_at = None
+        self._expiry_at = None
         self._closed = False
 
     def _run_account(self, uid, scan_due):
@@ -103,6 +107,9 @@ class WorkerScheduler:
             return
         monotonic = time.monotonic() if now_monotonic is None else now_monotonic
         now = int(time.time())
+        if self._expiry_at is None or monotonic - self._expiry_at >= EXPIRY_CHECK_SECONDS:
+            expire_subscriptions(now=now)
+            self._expiry_at = monotonic
         for uid, future in list(self.in_flight.items()):
             if not future.done():
                 continue
