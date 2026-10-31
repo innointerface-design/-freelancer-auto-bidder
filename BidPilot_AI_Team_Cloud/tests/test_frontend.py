@@ -91,6 +91,9 @@ vm.runInContext(source,sandbox);
   if(!$('registerName').required||$('loginPassword').minLength!==12)throw Error('Registration constraints missing');
   $('registerName').value='Test Customer';$('loginEmail').value='customer@example.com';$('loginPassword').value='a long password 123';
   await $('loginForm').onsubmit({preventDefault(){}});
+  // Registration already authenticates; a separate user sign-in is one request.
+  $('loginEmail').value='customer@example.com';$('loginPassword').value='a long password 123';
+  await $('loginForm').onsubmit({preventDefault(){}});
   const f=$('paymentForm');
   f.elements.plan_tier.value='paid_pro';f.elements.method.value='bank';f.elements.amount.value='100000';f.elements.currency.value='PKR';f.elements.transaction_id.value='REF-123';
   await f.onsubmit({preventDefault(){},currentTarget:f});

@@ -91,7 +91,9 @@ def test_login_throttled_across_new_clients(app_client):
         assert c.post('/api/login', json={'email': 'absent@example.test', 'password': 'bad'}).status_code == 401
     assert c.post('/api/login', json={'email': 'absent@example.test', 'password': 'bad'}).status_code == 429
     with sessions() as s:
-        assert s.query(db.LoginAttempt).count() == 20
+        from app.auth_limits import account_identifier
+        assert s.query(db.LoginAttempt).filter_by(identifier=account_identifier('absent@example.test')).count() == 10
+        assert s.query(db.LoginAttempt).count() == 30
 
 
 def test_payment_prices_duplicate_and_single_approval(app_client):

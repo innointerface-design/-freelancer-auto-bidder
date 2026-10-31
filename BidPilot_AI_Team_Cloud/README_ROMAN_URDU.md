@@ -1,5 +1,7 @@
 # BidPilot AI — Ubuntu setup aur zaroori baatein
 
+**Latest v4.4:** successful login ko failure count karne wala bug aur redundant registration login fix hain. Pro upgrade ke baad sign-in aur account lock recovery [V4_4_LOGIN_FIX_ROMAN_URDU.md](V4_4_LOGIN_FIX_ROMAN_URDU.md) mein dekhein; password/plan preserve rehte hain.
+
 **Latest v4.3:** receiving payment accounts, admin verification, automatic monthly expiry aur password/session controls [V4_3_BILLING_SECURITY_ROMAN_URDU.md](V4_3_BILLING_SECURITY_ROMAN_URDU.md) mein hain. Password payment ke liye admin ko na bhejein.
 
 **Latest v4.2:** automatic bidding ON/OFF karne ke operator command aur complete steps [V4_2_AUTOBID_ROMAN_URDU.md](V4_2_AUTOBID_ROMAN_URDU.md) mein hain. Server switch ke baad web/worker restart aur apne account ka Auto-Pilot Save karna zaroori hai.

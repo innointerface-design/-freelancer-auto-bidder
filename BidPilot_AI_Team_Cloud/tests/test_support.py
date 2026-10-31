@@ -684,3 +684,11 @@ def test_general_transport_keeps_safe_environment_examples_valid_after_json_enco
     monkeypatch.setattr(ai, '_call_gemini', provider)
     result = helper(creds, mode='general', question=example, history=[{'role': 'assistant', 'content': example}])
     assert result['ai_used'] and result['reply'] == example
+
+
+def test_local_signin_guidance_preserves_plan_password_and_provider_error_scope(creds):
+    result = helper(creds, question='I cannot sign in after my Pro upgrade', eligible=False)
+    assert 'does not change your password' in result['reply']
+    assert 'retry countdown' in result['reply'] and 'Never send your password' in result['reply']
+    provider = helper(creds, question='OpenAI login returned 401', eligible=False)
+    assert 'OpenAI 401' in provider['reply']

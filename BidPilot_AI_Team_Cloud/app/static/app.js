@@ -2,6 +2,7 @@
 const $=id=>document.getElementById(id),S={me:null,csrf:'',jobs:[],selected:null,nav:'overview',intent:null,team:[],seen:null,alerts:false,ai_provider:'',payment_methods:{},registering:false,epoch:0,refreshRevision:0,proposalRevision:0,editorRevision:0,bidBusy:false,authBusy:false,aiBusy:'',aiRevision:0,basicBusy:false,basicRevision:0};
 const A={settings:null,templates:[],dirty:false,busy:'',loading:false,revision:0,loadRevision:0,restoreRevision:0,restore:null};
 const P={settings:null,busy:false,loading:false,dirty:false,revision:0,loadRevision:0,billingRevision:0,teamRevision:0,paymentBusy:false,decisionBusy:false};
+const L={revision:0,cooldowns:new Map(),timer:null,unlockBusy:false,blockedKey:''};
 const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const usd=j=>{const c=j.currency||'Currency unknown',a=j.budget_min,b=j.budget_max;return a==null&&b==null?`${c} · Budget flexible`:`${c} ${a??'?'}${b!=null?'–'+b:''}${j.type?.includes('hour')?'/hr':''}`};
 const age=t=>{if(!t)return 'Not scanned yet';return new Date(Number(t)*1000).toLocaleString()};
@@ -19,8 +20,27 @@ function setAuthMode(registering){
   $('authSubmit').textContent=registering?'Create account →':'Sign in to workspace →';
   $('authToggle').textContent=registering?'Already registered? Sign in':'New here? Create an account';
   $('loginMsg').textContent='';
+  renderAuthControls();
+}
+function authKey(registering=S.registering,email=$('loginEmail').value){return `${registering?'register':'login'}:${email.trim().toLowerCase()}`;}
+const authClock=()=>globalThis.performance?.now?.()??Date.now();
+function renderAuthControls(){
+  if(L.timer!==null)clearTimeout(L.timer);L.timer=null;
+  const key=authKey(),remaining=Math.max(0,Math.ceil(((L.cooldowns.get(key)||0)-authClock())/1000));
+  $('authSubmit').disabled=S.authBusy||remaining>0;$('authToggle').disabled=S.authBusy;
+  if(remaining){
+    const wait=remaining<60?`${remaining}s`:`${Math.floor(remaining/60)}m ${remaining%60}s`;
+    $('authSubmit').textContent=`Try again in ${wait}`;
+    $('loginMsg').textContent=`Too many attempts. Try again in ${wait}. If an administrator has reset this account lock, reload this page before retrying. This sign-in limit does not change your plan.`;
+    L.blockedKey=key;L.timer=setTimeout(renderAuthControls,1000);
+  }else{
+    if(L.cooldowns.has(key))L.cooldowns.delete(key);
+    $('authSubmit').textContent=S.authBusy?'Signing in…':S.registering?'Create account →':'Sign in to workspace →';
+    if(L.blockedKey){$('loginMsg').textContent=L.blockedKey===key?'You can try again now.':'';L.blockedKey='';}
+  }
 }
 function resetSession(){
+  L.revision++;L.cooldowns.clear();L.unlockBusy=false;L.blockedKey='';if(L.timer!==null)clearTimeout(L.timer);L.timer=null;
   S.epoch++;S.refreshRevision++;S.proposalRevision++;S.editorRevision++;S.aiRevision++;S.basicRevision++;
   Object.assign(S,{me:null,csrf:'',jobs:[],selected:null,nav:'overview',intent:null,team:[],seen:null,alerts:false,ai_provider:'',payment_methods:{},bidBusy:false,authBusy:false,aiBusy:'',basicBusy:false});
   window.clearSupportChat?.();
@@ -62,7 +82,18 @@ async function api(url,opts={}){
   let data;try{data=await r.json()}catch{throw Error(`Server returned an unreadable response (${r.status})`)}
   if(epoch!==S.epoch)throw Error('Session changed');
   if(r.status===401&&S.me)resetSession();
-  if(!r.ok){const error=new Error(typeof data.detail==='string'?data.detail:Array.isArray(data.detail)?data.detail.map(v=>`${v.loc?.slice(1).join('.')||'Input'}: ${v.msg||'Invalid value'}`).join(';'):`Request failed (${r.status})`);error.status=r.status;throw error;}
+  if(!r.ok){
+    const error=new Error(typeof data.detail==='string'?data.detail:Array.isArray(data.detail)?data.detail.map(v=>`${v.loc?.slice(1).join('.')||'Input'}: ${v.msg||'Invalid value'}`).join(';'):`Request failed (${r.status})`);error.status=r.status;
+    if(r.status===429){
+      let wait=typeof data.retry_after_seconds==='number'?data.retry_after_seconds:0;
+      if(!(Number.isFinite(wait)&&wait>0)){
+        const header=r.headers?.get?.('Retry-After')||'';
+        wait=/^[0-9]+(?:\.[0-9]+)?$/.test(header)?Number(header):Math.ceil((Date.parse(header)-(Date.parse(r.headers?.get?.('Date')||'')||Date.now()))/1000);
+      }
+      if(Number.isFinite(wait)&&wait>0)error.retryAfter=Math.min(86400,Math.ceil(wait));
+    }
+    throw error;
+  }
   return data;
 }
 const post=(path,data={})=>api(path,{method:'POST',body:JSON.stringify(data)});
@@ -643,7 +674,7 @@ async function loadTeam(){
     $('adminPaymentsList').innerHTML=payData.payments.length?payData.payments.map(p=>`<div class="member-row"><div><b>${esc(p.user_name)} (${esc(p.user_email)})</b> <span class="tag ${p.status==='approved'?'green':'orange'}">${esc(p.status.toUpperCase())}</span><small>${esc(planName(p.plan_tier))} · ${esc(p.method)} · ${esc(p.currency)} ${esc(p.amount)} · TID: <b>${esc(p.transaction_id)}</b> ${p.sender_phone?'· Phone: '+esc(p.sender_phone):''} ${p.notes?'· '+esc(p.notes):''} · Submitted: ${esc(age(p.created))}${p.reviewed_at?' · Reviewed: '+esc(age(p.reviewed_at)):''}</small></div><div class="member-actions">${p.status==='pending'?`<button class="primary" data-paydecide="${esc(p.id)}" data-act="approve">✓ Approve & Activate</button><button class="secondary danger" data-paydecide="${esc(p.id)}" data-act="reject">✕ Reject</button>`:`<small>${esc(age(p.created))}</small>`}</div></div>`).join(''):'<div class="empty">No payment requests submitted yet</div>';
     $('teamList').innerHTML=x.members.map(m=>{
       const isFree=m.plan_tier==='free_team';
-      return `<div class="member-row"><div><b>${esc(m.name)}</b> <span class="tag ${isFree?'green':'orange'}">${isFree?'FOUNDER (free)':`${esc(planName(m.plan_tier))} ($${planPrice(m.plan_tier)}/mo · ${esc(m.subscription_status)})`}</span><small>${esc(m.email)} · ${m.subscription_started_at?'Activated: '+esc(age(m.subscription_started_at))+' · ':''}${m.subscription_expires?'Expires: '+esc(age(m.subscription_expires))+' · ':''}${m.connected?'Freelancer Connected':'Not Connected'} · Auto-Bid: ${m.auto_admin_allowed&&m.auto_requested?'ON':'OFF'}</small></div><div class="member-actions"><button class="secondary" data-inspect="${esc(m.id)}">Activity</button><button class="secondary" data-toggleplan="${esc(m.id)}" data-tier="${m.plan_tier==='paid_starter'?'paid_pro':'paid_starter'}">${m.plan_tier==='paid_starter'?'Switch to Pro ($40)':'Switch to Starter ($10)'}</button>${m.id===S.me.id?'':`<button class="secondary" data-permission="${esc(m.id)}" data-value="${m.auto_admin_allowed?'0':'1'}">${m.auto_admin_allowed?'Pause Auto':'Allow Auto'}</button><button class="secondary" data-active="${esc(m.id)}" data-value="${m.active?'0':'1'}">${m.active?'Disable':'Enable'}</button>`}</div></div>`;
+      return `<div class="member-row"><div><b>${esc(m.name)}</b> <span class="tag ${isFree?'green':'orange'}">${isFree?'FOUNDER (free)':`${esc(planName(m.plan_tier))} ($${planPrice(m.plan_tier)}/mo · ${esc(m.subscription_status)})`}</span><small>${esc(m.email)} · ${m.subscription_started_at?'Activated: '+esc(age(m.subscription_started_at))+' · ':''}${m.subscription_expires?'Expires: '+esc(age(m.subscription_expires))+' · ':''}${m.connected?'Freelancer Connected':'Not Connected'} · Auto-Bid: ${m.auto_admin_allowed&&m.auto_requested?'ON':'OFF'}</small></div><div class="member-actions"><button class="secondary" data-inspect="${esc(m.id)}">Activity</button><button class="secondary" data-toggleplan="${esc(m.id)}" data-tier="${m.plan_tier==='paid_starter'?'paid_pro':'paid_starter'}">${m.plan_tier==='paid_starter'?'Switch to Pro ($40)':'Switch to Starter ($10)'}</button>${m.id===S.me.id?'':`<button class="secondary" data-permission="${esc(m.id)}" data-value="${m.auto_admin_allowed?'0':'1'}">${m.auto_admin_allowed?'Pause Auto':'Allow Auto'}</button><button class="secondary" data-active="${esc(m.id)}" data-value="${m.active?'0':'1'}">${m.active?'Disable':'Enable'}</button><button class="secondary" data-login-unlock="${esc(m.id)}">Reset sign-in lock</button>`}</div></div>`;
     }).join('')||'<div class="empty">No members</div>';
   }catch(e){notify(e.message,true)}
 }
@@ -840,14 +871,24 @@ if($('paymentForm')){
 }
 
 $('authToggle').onclick=()=>{if(!S.authBusy)setAuthMode(!S.registering)};
+$('loginEmail').addEventListener('input',renderAuthControls);
 $('loginForm').onsubmit=async e=>{
-  e.preventDefault();if(S.authBusy)return;S.authBusy=true;$('authSubmit').disabled=true;$('authToggle').disabled=true;
-  const credentials={email:$('loginEmail').value.trim(),password:$('loginPassword').value};
+  e.preventDefault();renderAuthControls();if(S.authBusy||$('authSubmit').disabled)return;
+  const epoch=S.epoch,revision=++L.revision,registering=S.registering;
+  const credentials={email:$('loginEmail').value.trim(),password:$('loginPassword').value},key=authKey(registering,credentials.email);
+  S.authBusy=true;renderAuthControls();
   try{
-    if(S.registering){await post('/api/register',{...credentials,name:$('registerName').value.trim()});setAuthMode(false);}
-    await post('/api/login',credentials);
-    $('loginMsg').textContent='';$('loginPassword').value='';await initialize();
-  }catch(ex){if(ex.message!=='Session changed')$('loginMsg').textContent=ex.message}finally{S.authBusy=false;$('authSubmit').disabled=false;$('authToggle').disabled=false}
+    if(registering)await post('/api/register',{...credentials,name:$('registerName').value.trim()});
+    else await post('/api/login',credentials);
+    if(epoch!==S.epoch||revision!==L.revision)return;
+    L.cooldowns.delete(key);L.blockedKey='';
+    if(registering)setAuthMode(false);
+    $('loginMsg').textContent='';if($('loginPassword').value===credentials.password)$('loginPassword').value='';await initialize();
+  }catch(ex){
+    if(epoch!==S.epoch||revision!==L.revision)return;
+    if(ex.status===429&&ex.retryAfter)L.cooldowns.set(key,authClock()+ex.retryAfter*1000);
+    if(ex.message!=='Session changed')$('loginMsg').textContent=authKey()===key?ex.message:'The earlier request did not complete. Your newer details are still unsent.';
+  }finally{if(epoch===S.epoch&&revision===L.revision){S.authBusy=false;renderAuthControls();}}
 };
 $('logout').onclick=async()=>{try{await post('/api/logout');resetSession()}catch(e){notify(e.message,true)}};
 $('findJobs').onclick=()=>navigate('jobs');$('topScan').onclick=manualScan;$('pageScan').onclick=manualScan;
@@ -856,10 +897,21 @@ document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>navigate(b.data
 for(const id of ['jobSearch','scoreFilter','countryFilter','typeFilter'])$(id).addEventListener(id==='jobSearch'?'input':'change',renderJobs);
 
 document.addEventListener('click',async e=>{
-  const target=e.target.closest('[data-job],[data-permission],[data-active],[data-inspect],[data-toggleplan],[data-paydecide]');
+  const target=e.target.closest('[data-job],[data-permission],[data-active],[data-inspect],[data-toggleplan],[data-paydecide],[data-login-unlock]');
   if(!target)return;
   if(target.dataset.job){openJob(target.dataset.job);return}
   if(target.dataset.inspect){await inspectMember(target.dataset.inspect);return}
+  if(target.dataset.loginUnlock){
+    if(S.me?.role!=='admin'||L.unlockBusy)return;
+    const epoch=S.epoch,accountId=S.me.id;L.unlockBusy=true;target.disabled=true;
+    try{
+      await post(`/api/team/${encodeURIComponent(target.dataset.loginUnlock)}/login-unlock`,{expected_user_id:accountId});
+      if(epoch!==S.epoch||S.me?.id!==accountId||S.me.role!=='admin')return;
+      notify('Member sign-in lock cleared. Ask the member to reload the sign-in page and retry the correct password; network limits still apply.');await loadTeam();
+    }catch(error){if(epoch===S.epoch&&!billingSessionError(error))notify(error.message,true)}
+    finally{if(epoch===S.epoch){L.unlockBusy=false;target.disabled=false;}}
+    return;
+  }
   if(target.dataset.paydecide){
     if(S.me?.role!=='admin'||P.decisionBusy)return;
     const epoch=S.epoch,accountId=S.me.id;P.decisionBusy=true;target.disabled=true;

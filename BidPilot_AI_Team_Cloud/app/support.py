@@ -50,6 +50,11 @@ GENERAL_CHAT_RULES = (
 )
 
 APP_KNOWLEDGE = (
+    'Sign-in uses failed-password account/network limits and a separate request cap. Successful sign-ins '
+    'do not consume the failed-password allowance. Registration already creates a session. A Pro upgrade '
+    'or renewal does not change the password. Login429 shows the server retry countdown; an admin can '
+    'reset only the intended member account failure counter in Team settings, without bypassing network '
+    'limits or changing passwords/plans. Enabled unpaid or expired members can still sign in for Billing. '
     'BidPilot uses official Freelancer OAuth APIs. The owner must confirm Freelancer permission and '
     'account eligibility before live automation. Freelancer User Agreement section 33 addresses express '
     'written permission for automated access, including API access; API Terms section 4.9 prohibits '
@@ -200,6 +205,13 @@ def make_general_prompt(question, history, secrets=()):
 
 def _local_reply(question):
     text = question.casefold()
+    if (any(term in text for term in ('sign in', 'sign-in', 'signin', 'login'))
+            and ('bidpilot' in text or not any(term in text for term in ('openai', 'chatgpt', 'gemini', 'freelancer', 'oauth')))):
+        return ('A Pro upgrade or renewal does not change your password. Use the registered email and exact '
+                'password; review browser autofill. For a sign-in limit, follow the displayed retry countdown. '
+                'An administrator can review account Enabled status and reset the intended member sign-in '
+                'failure lock in Team settings. Shared network limits still apply. Never send your password '
+                'to the administrator for payment or activation.')
     openai = any(term in text for term in ('openai', 'chatgpt'))
     gemini = 'gemini' in text
     freelancer = any(term in text for term in ('freelancer', 'oauth'))

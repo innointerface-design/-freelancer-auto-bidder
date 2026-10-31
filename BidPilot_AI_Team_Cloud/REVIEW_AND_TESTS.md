@@ -1,8 +1,22 @@
-# BidPilot AI — v4.3 features and verification
+# BidPilot AI — v4.4 features and verification
+
+## v4.4 Pro sign-in and limiter repair — 31 October 2026
+
+Current release verification: **550 application tests passed plus 26 subtests**, 93.82 seconds. Repository Ruff, Python compilation, JavaScript syntax and diff checks pass. One upstream Starlette TestClient deprecation warning remains. No database migration or new runtime dependency is required.
+
+The reported false lock was reproduced against committed v4.3 (`5a2de70`): ten successful sign-ins returned200, then the eleventh correct sign-in returned429. The Pro tier and password hash were unchanged. The old limiter counted every attempt against the same low account/IP allowance, and the frontend issued an unnecessary login after a successful registration had already created a session.
+
+Login now records failures separately from successful use, retains persistent per-account/network failure limits and a separate request cap, and reserves short-lived in-flight slots before hashing. PostgreSQL identifier locks and SQLite write reservations serialize admission without holding a database write lock during PBKDF2. A success clears only its own account failures, never shared network failures. Versioned counters separate the old mixed success/failure history from the new policy. Registration uses its created session directly; duplicate-email registration cannot clear an existing account's failures. Password verification is rechecked against the current hash/account state under the user lock before issuing a session. Expired or replaced login reservations cannot issue sessions or delete another request's reused counter rows.
+
+Genuine429 responses include remaining wait and Retry-After. The frontend displays that countdown using a monotonic client clock, guards duplicate/stale submissions and preserves newer input drafts. Admin-created account fields use new-password autocomplete instead of reusing operator login credentials. A guarded Team action and local `manage_login.py unlock --email ...` recovery clear only the selected account's failure bucket and audit the action. Passwords, subscription dates, account status, active sessions and other protections are preserved. After administrative recovery, reload the sign-in page to discard a prior local countdown.
+
+Actual Chromium passed **9 login flows**, including a real admin Pro upgrade, fifteen subsequent customer sign-ins/sign-outs, page refresh, shared-network admin access, failed-password protection/Retry-After, admin-only recovery, continued password verification and 390px/360px layout. No page JavaScript/CSP errors or external provider calls occurred. The customer in the screenshot was not accessed and no real password was requested; tests use isolated accounts.
+
+An isolated **PostgreSQL 17 authentication smoke passed** for repeated Pro logins, failed-password limits, scoped admin recovery, unchanged password/plan data and bounded concurrent admissions. Generated configuration, database container and test network were removed. No production deployment or live customer-account repair is claimed; the tested source must be installed on the user's server.
 
 ## v4.3 billing lifecycle and account security — 31 October 2026
 
-Current release verification: **527 application tests passed plus 26 subtests**, 66.19 seconds. Repository Ruff, Python compilation, JavaScript syntax and diff checks pass. The existing upstream Starlette TestClient deprecation warning remains. The release includes the previously prepared v4.2 auto-bidding helper below.
+V4.3 release verification: **527 application tests passed plus 26 subtests**, 66.19 seconds. Repository Ruff, Python compilation, JavaScript syntax and diff checks pass. The existing upstream Starlette TestClient deprecation warning remains. The release includes the previously prepared v4.2 auto-bidding helper below.
 
 Admin payment settings now persist validated receiving destinations for the supplied JazzCash/Easypaisa number, NayaPay IBAN and corrected Meezan IBAN. Existing non-empty environment payment instructions remain compatible until explicit database settings are saved. Disabled or invalid structured destinations are not published. Admin role, CSRF and expected-account guards protect changes; ordinary users cannot edit receiving accounts. Both supplied IBANs pass Pakistan length/bank-code/checksum checks; ownership and actual settlement were not verified through a bank API.
 

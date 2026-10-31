@@ -23,7 +23,7 @@ jobs:
       - run: pytest -q
 
   bidpilot:
-    name: BidPilot v4.3 checks (Python 3.12)
+    name: BidPilot v4.4 checks (Python 3.12)
     runs-on: ubuntu-latest
     defaults:
       run:

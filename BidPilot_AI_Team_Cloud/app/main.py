@@ -24,6 +24,8 @@ from .advanced import AdvancedConfigError, evaluate_filters, load_advanced, sche
 from .billing_lifecycle import (PERIOD_LABEL, BILLING_TIMEZONE, subscription_start, renewal_expiry,
                                 billing_period_start, expire_due_subscriptions, expire_subscriptions)
 from .payment_settings import public_payment_methods, payment_method_configured, install_payment_settings_routes
+from .auth_limits import (LoginRateLimited, reserve_login, finish_login, release_login,
+                          lock_identifiers, unlock_account_failures)
 
 log = logging.getLogger('bidpilot')
 DUMMY_PASSWORD_HASH = hash_password(secrets.token_urlsafe(32))
@@ -39,6 +41,13 @@ async def lifespan(app):
 
 app = FastAPI(title='BidPilot Team Cloud — Bidman Pro SaaS Edition', docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 app.mount('/static', StaticFiles(directory=os.path.join(ROOT, 'static')), name='static')
+
+
+@app.exception_handler(LoginRateLimited)
+async def login_rate_limit(request, exc):
+    return JSONResponse(status_code=429,
+                        content={'detail': exc.detail, 'retry_after_seconds': exc.retry_after_seconds},
+                        headers=exc.headers)
 
 
 @app.exception_handler(RequestValidationError)
@@ -239,6 +248,10 @@ class PermissionIn(InputModel):
     enabled: bool
 
 
+class LoginUnlockIn(InputModel):
+    expected_user_id: int | None = Field(default=None, ge=1, strict=True)
+
+
 def csrf_for(token):
     return hmac.new(SESSION_SECRET.encode(), ('csrf:' + token).encode(), hashlib.sha256).hexdigest()
 
@@ -367,6 +380,7 @@ def register(x: RegisterIn, request: Request, response: Response):
         s.add(u)
         try:
             s.flush()
+            unlock_account_failures(s, email)
             set_session(s, u.id, response)
             audit(s, u.id, 'registered')
             s.commit()
@@ -379,16 +393,33 @@ def register(x: RegisterIn, request: Request, response: Response):
 @app.post('/api/login')
 def login(x: LoginIn, response: Response, request: Request):
     email = x.email.strip().lower()
-    throttle(request, email, 'login')
-    with SessionLocal() as s:
-        u = s.query(User).filter_by(email=email).first()
-        valid = verify_password(x.password, u.password_hash if u else DUMMY_PASSWORD_HASH)
-        if not u or not valid or not u.active:
-            raise HTTPException(401, 'Invalid email or password')
-        revoke_auth_session(s, request.cookies.get('bp_session', ''))
-        set_session(s, u.id, response)
-        s.commit()
-        return {'ok': True}
+    ip = request.client.host if request.client else 'unknown'
+    reservation = reserve_login(SessionLocal, email, ip)
+    try:
+        with SessionLocal() as s:
+            u = s.query(User).filter_by(email=email).first()
+            uid, snapshot = (u.id, u.password_hash) if u else (None, DUMMY_PASSWORD_HASH)
+        valid = verify_password(x.password, snapshot)
+        with SessionLocal() as s:
+            lock_identifiers(s, [reservation.identifiers['account'], reservation.identifiers['network']])
+            if valid and uid is not None:
+                lock_user(s, uid)
+            u = s.get(User, uid) if uid is not None else None
+            authenticated = bool(valid and u and u.active and u.password_hash == snapshot)
+            finished = finish_login(s, reservation, authenticated)
+            authenticated = authenticated and finished
+            if authenticated:
+                revoke_auth_session(s, request.cookies.get('bp_session', ''))
+                set_session(s, u.id, response)
+            s.commit()
+    except Exception:
+        release_login(SessionLocal, reservation)
+        raise
+    if not finished:
+        raise HTTPException(409, 'This sign-in request expired. Please try again.')
+    if not authenticated:
+        raise HTTPException(401, 'Invalid email or password')
+    return {'ok': True}
 
 
 @app.post('/api/logout')
@@ -730,6 +761,21 @@ def update_member_plan(member_id: int, x: MemberPlanIn, uid: int = Depends(mutat
         audit(s, uid, 'member_plan_updated', f'{u.email}: {u.plan_tier} ({u.subscription_status}, ${u.monthly_fee}/mo)')
         s.commit()
         return {'ok': True, 'member': public_user(u)}
+
+
+@app.post('/api/team/{member_id}/login-unlock')
+def unlock_member_login(member_id: int, x: LoginUnlockIn, uid: int = Depends(mutate)):
+    if x.expected_user_id is not None and x.expected_user_id != uid:
+        raise HTTPException(409, 'Account changed. Reload before unlocking sign-in.')
+    admin_only(uid)
+    with SessionLocal() as s:
+        user = s.get(User, member_id)
+        if not user:
+            raise HTTPException(404, 'Member not found')
+        unlock_account_failures(s, user.email)
+        audit(s, member_id, 'login_unlocked', f'Account sign-in failures cleared by administrator {uid}; network protections remain active')
+        s.commit()
+    return {'ok': True}
 
 
 @app.post('/api/team/{member_id}/permission')
