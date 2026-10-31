@@ -1,5 +1,7 @@
 # BidPilot AI v4.4 — Pro upgrade ke baad sign-in aur lock recovery
 
+For a remaining `Invalid email or password`401, see [v4.4.1 local account diagnosis and secure password recovery](V4_4_1_ACCOUNT_RECOVERY_ROMAN_URDU.md). Unlocking a counter alone cannot fix a stored-password mismatch.
+
 Screenshot ka `Too many attempts` HTTP429 sign-in limiter se aata tha. V4.3 limiter successful sign-ins ko bhi count karta tha, aur ek shared IP se admin/customer logins mil kar 10 attempts par block ho sakte thay. Registration ke baad frontend ek extra login request bhi bhejta tha, jabke registration pehle se session create karti hai. Dono behaviors repair kiye gaye hain.
 
 ## Naya behavior

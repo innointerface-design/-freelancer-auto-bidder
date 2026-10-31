@@ -1,8 +1,20 @@
-# BidPilot AI — v4.4 features and verification
+# BidPilot AI — v4.4.1 features and verification
+
+## v4.4.1 existing-account diagnosis and secure local recovery — 31 October 2026
+
+Current release verification: **570 application tests passed plus 26 subtests**, 86.93 seconds. Repository Ruff, Python compilation and diff checks pass. One upstream Starlette TestClient deprecation warning remains. No schema change, runtime dependency or new public authentication endpoint is introduced.
+
+The user's remaining401 is distinct from the previously reproduced429. Code review found no plan/payment path that changes the password or Enabled state. Legacy350k PBKDF2 remains supported. The generated relative SQLite URL can resolve to different files when a web process starts from another working directory; this is a diagnostic possibility, not a confirmed cause in the customer's installation. Initial registration creates a session directly and does not prove that a later saved/autofilled password matches.
+
+Local `manage_login.py check --email ... [--verify-password]` reports an existing account's Enabled/plan status and a sanitized database location. Optional password comparison requires private terminal input and changes no account records, sessions, entitlement or sign-in counters. `reset-password --email ...` securely confirms a 12–256 character password, locks and rechecks the existing account, replaces its salted hash, revokes only its sessions, clears only its account-login failures and audits atomically. It preserves the plan, subscription dates, role, Enabled state and encrypted credentials. Missing databases/accounts, disabled accounts, insecure input, bad confirmation, encoding errors and concurrent changes fail closed. No database/bootstrap is created by this utility. Remote connection URLs and credential values are never printed.
+
+The **23 recovery tests** cover preservation, read-only matching/mismatching checks, nonterminal/getpass fallback refusal, missing database, scoped state, rollback and password-change races. An additional **5-flow actual pseudo-terminal/FastAPI smoke** verified hidden input with echo disabled, startup from a different working directory, matching and mismatching passwords, a literal Unicode/metacharacter password reset, old-cookie/password rejection, successful login to the same Pro account and unchanged billing/credential fields. All data was synthetic; no external provider was called.
+
+The customer's actual database and password have not been inspected. The customer-reported401 is still pending the local check; no claim is made that publishing this release alone repairs an unknown credential or configuration mismatch. [Operator steps](V4_4_1_ACCOUNT_RECOVERY_ROMAN_URDU.md).
 
 ## v4.4 Pro sign-in and limiter repair — 31 October 2026
 
-Current release verification: **550 application tests passed plus 26 subtests**, 93.82 seconds. Repository Ruff, Python compilation, JavaScript syntax and diff checks pass. One upstream Starlette TestClient deprecation warning remains. No database migration or new runtime dependency is required.
+V4.4 release verification: **550 application tests passed plus 26 subtests**, 93.82 seconds. Repository Ruff, Python compilation, JavaScript syntax and diff checks pass. One upstream Starlette TestClient deprecation warning remains. No database migration or new runtime dependency is required.
 
 The reported false lock was reproduced against committed v4.3 (`5a2de70`): ten successful sign-ins returned200, then the eleventh correct sign-in returned429. The Pro tier and password hash were unchanged. The old limiter counted every attempt against the same low account/IP allowance, and the frontend issued an unnecessary login after a successful registration had already created a session.
 
