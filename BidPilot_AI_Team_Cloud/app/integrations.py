@@ -238,7 +238,7 @@ def _read_error_json(response):
         return (data if isinstance(data, dict) else {}), 'json'
     except httpx.HTTPError:
         return {}, 'unreadable'
-    except (ValueError, UnicodeError):
+    except (ValueError, UnicodeError, RecursionError):
         return {}, 'non_json'
 
 
@@ -316,7 +316,7 @@ def _request_json(method, url, headers, payload, provider, *, params=None, timeo
         raise AIProviderError(f'{provider} request timed out; try later') from None
     except (httpx.RequestError, httpx.InvalidURL):
         raise AIProviderError(f'Cannot reach {provider}; check server outbound network access') from None
-    except (ValueError, UnicodeError):
+    except (ValueError, UnicodeError, RecursionError):
         raise AIProviderError(f'{provider} returned invalid JSON') from None
 
 

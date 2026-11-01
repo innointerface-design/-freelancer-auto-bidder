@@ -1,5 +1,5 @@
 'use strict';
-const $=id=>document.getElementById(id),S={me:null,csrf:'',jobs:[],selected:null,nav:'overview',intent:null,team:[],seen:null,alerts:false,ai_provider:'',payment_methods:{},registering:false,epoch:0,refreshRevision:0,proposalRevision:0,editorRevision:0,bidBusy:false,authBusy:false,aiBusy:'',aiRevision:0,basicBusy:false,basicRevision:0};
+const $=id=>document.getElementById(id),S={me:null,csrf:'',jobs:[],selected:null,nav:'overview',intent:null,team:[],seen:null,alerts:false,ai_provider:'',payment_methods:{},registering:false,epoch:0,refreshRevision:0,proposalRevision:0,editorRevision:0,bidBusy:false,authBusy:false,aiBusy:'',aiRevision:0,basicBusy:false,basicRevision:0,basicRendered:null,aiRendered:null,connectionBusy:false,liveBidsRevision:0,inspectRevision:0,activityRevision:0};
 const A={settings:null,templates:[],dirty:false,busy:'',loading:false,revision:0,loadRevision:0,restoreRevision:0,restore:null};
 const P={settings:null,busy:false,loading:false,dirty:false,revision:0,loadRevision:0,billingRevision:0,teamRevision:0,paymentBusy:false,decisionBusy:false,expiryBusy:false};
 const L={revision:0,cooldowns:new Map(),timer:null,unlockBusy:false,blockedKey:''};
@@ -41,8 +41,8 @@ function renderAuthControls(){
 }
 function resetSession(){
   L.revision++;L.cooldowns.clear();L.unlockBusy=false;L.blockedKey='';if(L.timer!==null)clearTimeout(L.timer);L.timer=null;
-  S.epoch++;S.refreshRevision++;S.proposalRevision++;S.editorRevision++;S.aiRevision++;S.basicRevision++;
-  Object.assign(S,{me:null,csrf:'',jobs:[],selected:null,nav:'overview',intent:null,team:[],seen:null,alerts:false,ai_provider:'',payment_methods:{},bidBusy:false,authBusy:false,aiBusy:'',basicBusy:false});
+  S.epoch++;S.refreshRevision++;S.proposalRevision++;S.editorRevision++;S.aiRevision++;S.basicRevision++;S.liveBidsRevision++;S.inspectRevision++;S.activityRevision++;
+  Object.assign(S,{me:null,csrf:'',jobs:[],selected:null,nav:'overview',intent:null,team:[],seen:null,alerts:false,ai_provider:'',payment_methods:{},bidBusy:false,authBusy:false,aiBusy:'',basicBusy:false,basicRendered:null,aiRendered:null,connectionBusy:false});
   window.clearSupportChat?.();
   window.clearAutomationLive?.();
   window.clearAccountSecurity?.();
@@ -79,10 +79,11 @@ async function api(url,opts={}){
   try{
     r=await fetch(url,{credentials:'same-origin',...opts,headers:{'Content-Type':'application/json',...(opts.method&&opts.method!=='GET'&&url!=='/api/login'?{'X-CSRF-Token':S.csrf}:{}),...(opts.headers||{})}});
   }catch{throw Error('Network connection unavailable')}
-  let data;try{data=await r.json()}catch{throw Error(`Server returned an unreadable response (${r.status})`)}
+  let data;try{data=await r.json()}catch{if(r.ok)throw Error(`Server returned an unreadable response (${r.status})`);data={};}
   if(epoch!==S.epoch)throw Error('Session changed');
   if(r.status===401&&S.me)resetSession();
   if(!r.ok){
+    if(!data||typeof data!=='object')data={};
     const error=new Error(typeof data.detail==='string'?data.detail:Array.isArray(data.detail)?data.detail.map(v=>`${v.loc?.slice(1).join('.')||'Input'}: ${v.msg||'Invalid value'}`).join(';'):`Request failed (${r.status})`);error.status=r.status;
     if(r.status===429){
       let wait=typeof data.retry_after_seconds==='number'?data.retry_after_seconds:0;
@@ -148,7 +149,7 @@ function navigate(view){
   if(view==='proposals'){renderProposals();loadLiveBids();}
   if(view==='team')loadTeam();
   if(view==='billing')loadBilling();
-  if(view==='settings'){renderSettings();loadAdvancedSettings();}
+  if(view==='settings'){renderSettings(true);loadAdvancedSettings();}
   window.scrollTo(0,0);
 }
 
@@ -181,12 +182,12 @@ function renderStatus(){
   const auto=autoBidReadiness(u);
   $('autoStatus').textContent=auto.status;
   $('autoWarning').textContent=auto.message;
-  if($('chatStatus'))$('chatStatus').textContent=u.auto_chat_greeting&&S.platform_auto&&u.connected&&u.subscription_active?'Enabled (worker required)':'Off';
+  if($('chatStatus'))$('chatStatus').textContent=u.auto_chat_greeting&&S.platform_auto&&u.connected&&u.subscription_active&&u.auto_admin_allowed&&!freelancerPauseReason(u)?'Enabled (worker required)':'Off';
   if($('aiStatus').previousElementSibling)$('aiStatus').previousElementSibling.textContent='Configured AI providers';
   $('aiStatus').textContent=u.subscription_active?(S.ai_provider||'Template fallback'):'Templates (subscription inactive)';
   for(const id of ['topScan','pageScan','runAutoNow','refreshLiveBidsBtn'])$(id).disabled=!u.subscription_active||!!freelancerPauseReason(u);
   $('testChatBtn').disabled=!u.subscription_active;
-  renderAIControls();renderAdvancedControls();renderAutomationSafety();
+  renderAIControls();renderAdvancedControls();renderAutomationSafety();renderConnectionControls();
   $('proposalAI').textContent=u.subscription_active?'✧ AI Write Proposal (Gemini / OpenAI)':'✦ Template Proposal (demo)';
   syncBidActions();
   $('connectionBanner').textContent=u.connected?`Connected to @${u.freelancer_name} (${u.environment}). Token encrypted. ${freelancerPauseReason(u)|| (u.last_error?'Last error: '+u.last_error:'')}`:'Connect your Freelancer OAuth Token below to enable live scanning, automated bidding, and auto-chat replies.';
@@ -266,7 +267,9 @@ async function makeProposal(ai){
 }
 
 async function saveDraft(){
-  if(!S.selected)return false;
+  if(!S.selected||S.bidBusy)return false;
+  const epoch=S.epoch;
+  S.bidBusy=true;syncBidActions();
   try{
     await post(`/api/jobs/${S.selected.id}/draft`,{
       amount:Number($('bidAmount').value),
@@ -276,6 +279,7 @@ async function saveDraft(){
     });
     notify('Proposal draft saved');await refresh();return true;
   }catch(e){notify(e.message,true);return false}
+  finally{if(epoch===S.epoch){S.bidBusy=false;syncBidActions();}}
 }
 
 async function instantBid(){
@@ -304,6 +308,7 @@ async function prepareBid(){
     if(JSON.stringify(readBidEditor())!==JSON.stringify(payload)){notify('Draft saved. Review your new edits and prepare again.');return}
     const x=await post(`/api/jobs/${j.id}/prepare`);
     if(S.selected?.id!==j.id||revision!==S.editorRevision)return;
+    if(JSON.stringify(readBidEditor())!==JSON.stringify(payload)){notify('Draft saved. Review your new edits and prepare again.');return;}
     S.intent={id:j.id,token:x.intent};
     $('confirmText').textContent=`${x.preview.title} · ${x.preview.currency} ${x.preview.amount} · ${x.preview.days} days · Milestone ${x.preview.milestone_pct||100}% · ${x.preview.environment}`;
     $('confirmProposal').textContent=x.preview.proposal;
@@ -326,10 +331,13 @@ async function confirmBid(){
 }
 
 async function loadActivity(){
+  if(!S.me)return;
+  const epoch=S.epoch,accountId=S.me.id,revision=++S.activityRevision;
   try{
     let a=await api('/api/audit');
+    if(epoch!==S.epoch||S.me?.id!==accountId||revision!==S.activityRevision)return;
     $('activityBody').innerHTML=a.events.length?a.events.map(e=>`<div class="activity-row"><div><b>${esc(e.action.replaceAll('_',' '))}</b><div class="job-sub">${esc(e.message)}</div></div><small>${esc(age(e.created))}</small></div>`).join(''):'<div class="empty">No activities yet</div>';
-  }catch(e){notify(e.message,true)}
+  }catch(e){if(epoch===S.epoch&&revision===S.activityRevision)notify(e.message,true)}
 }
 
 function basicSettingsSnapshot(){
@@ -337,33 +345,34 @@ function basicSettingsSnapshot(){
   for(const field of BACKUP_BASIC_FIELDS){const control=form.elements[field];if(control)snapshot[field]=['auto_chat_greeting','allow_hourly','allow_any_currency','require_payment_verified','require_country_match','auto_requested'].includes(field)?!!control.checked:control.value;}
   return snapshot;
 }
-function renderBasicSettings(){
+function renderBasicSettings(preserveDrafts=false){
   if(!S.me)return;
   const u=S.me,form=$('settingsForm');
   for(const k of ['name','skills','search_terms','excluded_keywords','countries','portfolio','description','proposal_tone','bid_strategy','default_days','milestone_pct','chat_greeting_template','min_score','min_budget','max_bid','max_daily','max_hourly']){
-    if(form.elements[k])form.elements[k].value=u[k]??'';
+    if(form.elements[k]&&(!preserveDrafts||!S.basicRendered||form.elements[k].value===S.basicRendered[k]))form.elements[k].value=u[k]??'';
   }
   for(const chk of ['auto_chat_greeting','allow_hourly','allow_any_currency','require_payment_verified','require_country_match','auto_requested']){
-    if(form.elements[chk])form.elements[chk].checked=!!u[chk];
+    if(form.elements[chk]&&(!preserveDrafts||!S.basicRendered||form.elements[chk].checked===S.basicRendered[chk]))form.elements[chk].checked=!!u[chk];
   }
+  S.basicRendered=Object.fromEntries(BACKUP_BASIC_FIELDS.map(field=>[field,['auto_chat_greeting','allow_hourly','allow_any_currency','require_payment_verified','require_country_match','auto_requested'].includes(field)?!!u[field]:String(u[field]??'')]));
 }
-function renderAISettings(){
+function renderAISettings(preserveDrafts=false){
   if(!S.me)return;
   const u=S.me,aiForm=$('aiKeysForm');
   if(aiForm){
     aiForm.elements.gemini_key.placeholder='Provider-issued Gemini API key (blank keeps saved key)';
     aiForm.elements.openai_key.placeholder='Provider-issued secret API key (blank keeps saved key)';
-    aiForm.elements.preferred_ai.value=u.preferred_ai||'auto';
-    aiForm.elements.gemini_model.value=u.gemini_model||'gemini-3.5-flash-lite';
-    aiForm.elements.openai_model.value=u.openai_model||'gpt-4.1-mini';
+    const saved={preferred_ai:u.preferred_ai||'auto',gemini_model:u.gemini_model||'gemini-3.5-flash-lite',openai_model:u.openai_model||'gpt-4.1-mini'};
+    for(const [field,value] of Object.entries(saved))if(!preserveDrafts||!S.aiRendered||aiForm.elements[field].value===S.aiRendered[field])aiForm.elements[field].value=value;
+    S.aiRendered=saved;
     $('geminiMaskBadge').textContent=u.has_gemini_key?`(Saved: ${u.gemini_key_masked})`:'(Not set)';
     $('openaiMaskBadge').textContent=u.has_openai_key?`(Saved: ${u.openai_key_masked})`:'(Not set)';
     $('aiKeysBanner').innerHTML=`<b>Configured AI providers (saved settings):</b> ${esc(S.ai_provider)} · Gemini Key: <b>${u.has_gemini_key?esc(u.gemini_key_masked):'Not Set'}</b> · ChatGPT Key: <b>${u.has_openai_key?esc(u.openai_key_masked):'Not Set'}</b>`;
   }
 }
-function renderSettings(){
+function renderSettings(preserveDrafts=false){
   if(!S.me)return;
-  renderBasicSettings();renderAISettings();renderStatus();
+  renderBasicSettings(preserveDrafts);renderAISettings(preserveDrafts);renderStatus();
 }
 
 // Advanced preferences have a separate lifecycle so refreshing AI/account status
@@ -717,8 +726,10 @@ async function expireMemberPlan(target){
 
 async function inspectMember(id){
   if(S.me?.role!=='admin')return;
+  const epoch=S.epoch,accountId=S.me.id,revision=++S.inspectRevision;
   try{
     const x=await api(`/api/team/${encodeURIComponent(id)}/overview`);
+    if(epoch!==S.epoch||S.me?.id!==accountId||S.me.role!=='admin'||revision!==S.inspectRevision)return;
     const m=x.member;
     $('teamOverview').classList.remove('hidden');
     $('teamOverview').innerHTML=`<div class="panel-heading"><div><div class="eyebrow">ADMIN READ-ONLY REVIEW</div><h3>${esc(m.name)} — ${esc(m.email)} (${esc(planName(m.plan_tier))})</h3></div></div>`+
@@ -727,7 +738,7 @@ async function inspectMember(id){
       (x.jobs.length?x.jobs.map(j=>`<div class="activity-row"><div><b>${esc(j.title)}</b><div class="job-sub">${esc(j.demo?'DEMO':'API')} • ${esc(j.score)}/100 • ${esc(j.bid_status)}${j.bid_amount==null?'':' • '+esc(j.currency)+' '+esc(j.bid_amount)}</div></div></div>`).join(''):'<div class="empty">No jobs yet</div>')+
       `<h3>Recent account activity</h3>`+
       (x.activity.length?x.activity.map(a=>`<div class="activity-row"><div><b>${esc(a.action.replaceAll('_',' '))}</b><div class="job-sub">${esc(a.message)}</div></div><small>${esc(age(a.created))}</small></div>`).join(''):'<div class="empty">No activities yet</div>');
-  }catch(e){notify(e.message,true)}
+  }catch(e){if(epoch===S.epoch&&revision===S.inspectRevision)notify(e.message,true)}
 }
 
 async function manualScan(){
@@ -735,7 +746,7 @@ async function manualScan(){
   try{
     const x=await post('/api/scan');
     notify(`Scan complete: ${x.found} jobs, ${x.new} new, ${x.auto_submitted||0} Auto-Bids, ${x.chat_replied||0} Auto-Chats sent!`);
-    await refresh();S.me=(await api('/api/me')).user;renderStatus();
+    await refresh();
   }catch(e){notify(e.message,true)}finally{if(S.me)renderStatus()}
 }
 
@@ -978,7 +989,7 @@ $('alertBtn').onclick=async()=>{if(!('Notification' in window)){notify('Browser 
 $('modalClose').onclick=closeJob;$('jobModal').addEventListener('click',e=>{if(e.target===$('jobModal'))closeJob()});
 $('proposalTemplate').onclick=()=>makeProposal(false);$('proposalAI').onclick=()=>makeProposal(true);
 $('saveDraft').onclick=saveDraft;$('instantBidBtn').onclick=instantBid;$('prepareBid').onclick=prepareBid;
-$('confirmation').oninput=()=>{$('confirmSubmit').disabled=$('confirmation').value!=='PLACE BID'};
+$('confirmation').oninput=()=>{$('confirmSubmit').disabled=S.bidBusy||!S.intent||$('confirmation').value!=='PLACE BID'};
 $('cancelConfirm').onclick=()=>{$('confirmModal').classList.add('hidden');S.intent=null};
 $('confirmSubmit').onclick=confirmBid;
 $('proposalCopy').onclick=async()=>{try{await navigator.clipboard.writeText($('bidProposal').value);notify('Proposal copied to clipboard')}catch{notify('Select text manually to copy',true)}};
@@ -1013,16 +1024,44 @@ $('settingsForm').onsubmit=async e=>{
   finally{if(epoch===S.epoch&&revision===S.basicRevision){S.basicBusy=false;renderAdvancedControls();}}
 };
 
+function renderConnectionControls(){
+  const submit=$('connectForm').querySelector?.('button[type="submit"]');
+  if(submit)submit.disabled=S.connectionBusy||!S.me;
+  $('disconnect').disabled=S.connectionBusy||!S.me;
+}
+async function refreshConnectionSettings(epoch,accountId){
+  const revision=++S.refreshRevision;
+  const account=await api('/api/me');
+  if(epoch!==S.epoch||S.me?.id!==accountId||revision!==S.refreshRevision)return;
+  applyAccount(account);renderSettings(true);
+}
 $('connectForm').onsubmit=async e=>{
   e.preventDefault();
+  if(!S.me||S.connectionBusy)return;
+  const epoch=S.epoch,accountId=S.me.id,token=$('connectToken').value;
+  S.connectionBusy=true;renderConnectionControls();
   try{
-    const x=await post('/api/connect',{environment:$('connectEnv').value,token:$('connectToken').value});
-    $('connectToken').value='';S.me=(await api('/api/me')).user;renderSettings();
+    const x=await post('/api/connect',{environment:$('connectEnv').value,token});
+    if(epoch!==S.epoch||S.me?.id!==accountId)return;
+    if($('connectToken').value===token)$('connectToken').value='';
+    await refreshConnectionSettings(epoch,accountId);
+    if(epoch!==S.epoch||S.me?.id!==accountId)return;
     notify(`Connected @${x.freelancer_name}; imported ${x.skills_imported.length} skills`);
-  }catch(e){notify(e.message,true)}
+  }catch(e){if(epoch===S.epoch)notify(e.message,true)}
+  finally{if(epoch===S.epoch){S.connectionBusy=false;renderConnectionControls();}}
 };
 
-$('disconnect').onclick=async()=>{if(!confirm('Disconnect your Freelancer API account?'))return;try{await post('/api/disconnect');S.me=(await api('/api/me')).user;renderSettings();notify('Connection removed')}catch(e){notify(e.message,true)}};
+$('disconnect').onclick=async()=>{
+  if(!S.me||S.connectionBusy)return;
+  const epoch=S.epoch,accountId=S.me.id;
+  if(!confirm('Disconnect your Freelancer API account?')||epoch!==S.epoch||S.me?.id!==accountId)return;
+  S.connectionBusy=true;renderConnectionControls();
+  try{
+    await post('/api/disconnect');await refreshConnectionSettings(epoch,accountId);
+    if(epoch===S.epoch&&S.me?.id===accountId)notify('Connection removed');
+  }catch(e){if(epoch===S.epoch)notify(e.message,true)}
+  finally{if(epoch===S.epoch){S.connectionBusy=false;renderConnectionControls();}}
+};
 
 $('memberForm').onsubmit=async e=>{
   e.preventDefault();
@@ -1041,10 +1080,12 @@ setInterval(()=>{if(S.me&&!document.hidden)refresh()},30000);
 async function loadLiveBids(){
   const box=$('liveBidsBody');
   if(!box)return;
+  const epoch=S.epoch,accountId=S.me?.id,revision=++S.liveBidsRevision;
   if(!S.me?.subscription_active){box.innerHTML='<div class="empty"><b>Activate a subscription to sync live Freelancer bids</b></div>';return;}
   box.innerHTML='<div class="empty"><b>Fetching live bids from Freelancer...</b></div>';
   try{
     const res=await api('/api/live-bids');
+    if(epoch!==S.epoch||S.me?.id!==accountId||revision!==S.liveBidsRevision)return;
     if(!res.connected){
       box.innerHTML='<div class="empty"><b>Freelancer account not connected</b><p>Connect your personal OAuth token in Settings to view live bids placed on Freelancer.</p></div>';
       return;
@@ -1052,6 +1093,7 @@ async function loadLiveBids(){
     const arr=res.bids||[];
     box.innerHTML=arr.length?arr.map(b=>`<div class="opportunity"><div><div class="job-title">${esc(b.project_title)}</div><div class="job-sub">Amount: <b>${esc(b.currency||'Currency unknown')} ${esc(b.amount)}</b> · Period: ${esc(b.period)} days · Milestone: ${esc(b.milestone_percentage||100)}% · Status: <span class="tag green">${esc(String(b.status||'unknown').toUpperCase())}</span></div></div><div class="op-right"><a href="https://www.freelancer.com/projects/${esc(b.project_id)}" target="_blank" rel="noopener" class="secondary small-link">View →</a></div></div>`).join(''):'<div class="empty"><b>No active bids found on Freelancer</b><p>Any bid placed through the app or directly on Freelancer will appear here.</p></div>';
   }catch(e){
+    if(epoch!==S.epoch||S.me?.id!==accountId||revision!==S.liveBidsRevision)return;
     box.innerHTML=`<div class="empty"><b>Could not fetch live bids</b><p>${esc(e.message)}</p></div>`;
   }
 }

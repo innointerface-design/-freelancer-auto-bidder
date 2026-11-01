@@ -26,6 +26,7 @@ from .billing_lifecycle import (PERIOD_LABEL, BILLING_TIMEZONE, subscription_sta
 from .payment_settings import public_payment_methods, payment_method_configured, install_payment_settings_routes
 from .auth_limits import (LoginRateLimited, reserve_login, finish_login, release_login,
                           lock_identifiers, unlock_account_failures)
+from .project_data import load_project_json
 
 log = logging.getLogger('bidpilot')
 DUMMY_PASSWORD_HASH = hash_password(secrets.token_urlsafe(32))
@@ -333,15 +334,33 @@ def owned(s, cls, objid, uid):
     return obj
 
 
+def project_data(project, *, display=False):
+    try:
+        return load_project_json(project.data)
+    except (ValueError, TypeError, RecursionError):
+        if not display:
+            raise HTTPException(409, 'Saved project data is unavailable. Scan again before editing or bidding.') from None
+        return {'title': 'Project data unavailable', 'description': 'Scan again to refresh this project.',
+                'project_status': 'unavailable', 'data_error': True}
+
+
 def pack_job(j):
-    d = json.loads(j.data)
+    d = project_data(j, display=True)
+    try:
+        reasons = json.loads(j.reasons or '[]')
+    except (ValueError, TypeError, RecursionError):
+        reasons = []
+    if not isinstance(reasons, list):
+        reasons = []
+    reasons = [reason for reason in reasons if isinstance(reason, str)]
+    invalid = bool(d.get('data_error'))
     return {
         **d,
         'id': j.id,
         'remote_id': j.remote_id,
-        'score': j.score,
-        'decision': j.decision,
-        'reasons': json.loads(j.reasons or '[]')
+        'score': 0 if invalid else j.score,
+        'decision': 'Skip' if invalid else j.decision,
+        'reasons': ['Saved project data is unavailable; scan again'] if invalid else reasons
     }
 
 
@@ -644,17 +663,21 @@ def admin_decide_payment(payment_id: int, x: PaymentDecisionIn, uid: int = Depen
         if x.action == 'approve':
             lock_user(s, u.id)
             u = s.get(User, pr.user_id)
-            expire_due_subscriptions(s, user_id=u.id)
+            now = int(time.time())
+            expire_due_subscriptions(s, user_id=u.id, now=now)
             if pr.plan_tier not in ('paid_starter', 'paid_pro') or pr.currency != 'USD' or abs(pr.amount - plan_config(pr.plan_tier)['monthly_fee']) > 0.001:
                 raise HTTPException(400, 'Payment does not match an available plan')
             if u.plan_tier == 'free_team':
                 raise HTTPException(400, 'Founder accounts do not require payment')
-            if subscription_active(u) and u.plan_tier == pr.plan_tier:
-                pr.access_starts_at = max(int(time.time()), u.subscription_expires)
-                u.subscription_expires = renewal_expiry(u)
+            # Disabling sign-in must not discard already purchased future time.
+            # Renewal eligibility concerns the grant, independently of login.
+            if (u.plan_tier == pr.plan_tier and u.subscription_status in ('active', 'trial')
+                    and int(u.subscription_expires or 0) > now):
+                pr.access_starts_at = u.subscription_expires
+                u.subscription_expires = renewal_expiry(u, now=now)
                 u.subscription_status = 'active'
             else:
-                apply_plan(u, pr.plan_tier, 'active')
+                apply_plan(u, pr.plan_tier, 'active', now=now)
                 pr.access_starts_at = subscription_start(u)
             pr.access_expires_at = u.subscription_expires
             audit(s, u.id, 'subscription_activated', f'Payment #{pr.id} manually verified by admin {uid}; calendar-month access')
@@ -708,13 +731,13 @@ def team_member_overview(member_id: int, uid: int = Depends(current)):
             },
             'jobs': [
                 {
-                    'title': json.loads(j.data).get('title', ''),
+                    'title': project_data(j, display=True).get('title', ''),
                     'score': j.score,
                     'remote_id': j.remote_id,
-                    'demo': bool(json.loads(j.data).get('demo')),
+                    'demo': bool(project_data(j, display=True).get('demo')),
                     'bid_status': by_job[j.id].status if j.id in by_job else 'none',
                     'bid_amount': by_job[j.id].amount if j.id in by_job else None,
-                    'currency': json.loads(j.data).get('currency', '')
+                    'currency': project_data(j, display=True).get('currency', '')
                 }
                 for j in jobs
             ],
@@ -865,16 +888,19 @@ def settings(x: SettingsIn, uid: int = Depends(mutate)):
     if (x.auto_requested or x.auto_chat_greeting) and not PLATFORM_AUTO:
         raise HTTPException(403, 'Server auto-bid switch is disabled in .env')
     with SessionLocal() as s:
+        lock_user(s, uid)
         u = s.get(User, uid)
+        if not u or not u.active:
+            raise HTTPException(401, 'Please sign in again')
+        if x.auto_requested or x.auto_chat_greeting:
+            require_subscription(s, uid)
         for k, v in x.model_dump().items():
             setattr(u, k, v)
         u.updated = int(time.time())
-        for j in s.query(Job).filter_by(user_id=uid).all():
-            raw = json.loads(j.data)
-            sc = score_for_user(raw, u)
-            j.score = sc['score']
-            j.decision = sc['decision']
-            j.reasons = json.dumps(sc['reasons'])
+        # Use the same malformed-row handling as settings restore, so an older
+        # damaged project cannot prevent saving otherwise valid preferences.
+        from .preferences_api import _rescore
+        _rescore(s, uid, u)
         audit(s, uid, 'settings_updated', f'Bidman Pro settings updated (Auto-Pilot={u.auto_requested}, Milestone={u.milestone_pct}%, Auto-Chat={u.auto_chat_greeting})')
         s.commit()
         return {'user': public_user(u, s.query(Connection).filter_by(user_id=uid).first())}
@@ -1128,7 +1154,7 @@ def reserve_bid(s, uid, job_id, *, draft=None, intent=None, source='manual'):
     lock_user(s, uid)
     u = require_subscription(s, uid)
     j = owned(s, Job, job_id, uid)
-    raw = json.loads(j.data)
+    raw = project_data(j)
     c = s.query(Connection).filter_by(user_id=uid).first()
     if not c or raw.get('demo'):
         raise HTTPException(403, 'Connect a Freelancer account and use a live project')
@@ -1198,7 +1224,7 @@ def send_reserved(bid_id, remote_id, connection_id, environment, freelancer_id, 
         u = s.get(User, b.user_id)
         c = s.get(Connection, connection_id)
         j = s.get(Job, b.job_id)
-        raw = json.loads(j.data) if j else {}
+        raw = project_data(j, display=True) if j else {}
         reason = ''
         if stop_event is not None and stop_event.is_set():
             reason = 'Worker is stopping'
@@ -1299,7 +1325,7 @@ def run_autobid_cycle(uid, *, stop_event=None):
                 require_freelancer_available(c, u)
                 require_bid_spacing(s, u, c)
                 j = owned(s, Job, job_id, uid)
-                raw = json.loads(j.data)
+                raw = project_data(j)
                 existing = s.query(Bid).filter_by(user_id=uid, job_id=j.id).first()
                 allowed, _, amount = auto_eligible(raw, j.score, u, c, PLATFORM_AUTO, existing)
                 if not allowed:
@@ -1595,7 +1621,7 @@ def proposal(job_id: int, request: Request, uid: int = Depends(mutate)):
     with SessionLocal() as s:
         j = owned(s, Job, job_id, uid)
         u = s.get(User, uid)
-        job = json.loads(j.data)
+        job = project_data(j)
         try:
             proposal_text = make_proposal(job, u)
         except AdvancedConfigError:
@@ -1616,7 +1642,7 @@ def review_ai(job_id: int, uid: int = Depends(mutate)):
         j = owned(s, Job, job_id, uid)
         u = s.get(User, uid)
         return {
-            'review': ai_review(json.loads(j.data), u),
+            'review': ai_review(project_data(j), u),
             'note': 'BidPilot AI Opportunity & Strategy Analysis'
         }
 
@@ -1628,7 +1654,7 @@ def proposal_ai(job_id: int, uid: int = Depends(mutate)):
         require_subscription(s, uid)
         j = owned(s, Job, job_id, uid)
         u = s.get(User, uid)
-        job = json.loads(j.data)
+        job = project_data(j)
         try:
             proposal_text = ai_proposal(job, u)
         except AdvancedConfigError:
@@ -1646,7 +1672,7 @@ def save_draft(job_id: int, x: DraftIn, uid: int = Depends(mutate)):
     with SessionLocal() as s:
         lock_user(s, uid)
         j = owned(s, Job, job_id, uid)
-        raw = json.loads(j.data)
+        raw = project_data(j)
         if not raw.get('demo') and not valid_amount(raw, x.amount):
             raise HTTPException(400, 'Bid amount must fit the project budget in listing currency')
         b = s.query(Bid).filter_by(user_id=uid, job_id=job_id).first()
@@ -1673,7 +1699,7 @@ def valid_amount(raw, amount):
             return False
         vals = [float(v) for v in (a, b, amount) if v is not None]
         return all(math.isfinite(v) and v >= 0 for v in vals) and amount > 0 and (a is None or amount >= float(a)) and (b is None or amount <= float(b))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return False
 
 
@@ -1693,7 +1719,7 @@ def prepare_bid(job_id: int, uid: int = Depends(mutate)):
     with SessionLocal() as s:
         lock_user(s, uid)
         j = owned(s, Job, job_id, uid)
-        raw = json.loads(j.data)
+        raw = project_data(j)
         c = s.query(Connection).filter_by(user_id=uid).first()
         if raw.get('demo') or not c:
             raise HTTPException(403, 'Demo jobs cannot submit bids. Connect your own account.')

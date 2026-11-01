@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 from .advanced import AdvancedConfigError, AdvancedSettings, load_advanced
 from .db import User, Job, Connection, audit, public_user
 from .logic import score_for_user
+from .project_data import load_project_json
 
 
 MAX_BACKUP_BYTES = 128 * 1024
@@ -50,11 +51,9 @@ def _basic_preferences(main, raw):
 def _rescore(s, uid, user):
     for row in s.query(Job).filter_by(user_id=uid):
         try:
-            raw = json.loads(row.data)
-            if not isinstance(raw, dict):
-                raise ValueError('Invalid project')
+            raw = load_project_json(row.data)
             result = score_for_user(raw, user)
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, RecursionError):
             result = {'score': 0, 'decision': 'Skip', 'reasons': ['Project data is invalid; scan again']}
         row.score = result['score']
         row.decision = result['decision']

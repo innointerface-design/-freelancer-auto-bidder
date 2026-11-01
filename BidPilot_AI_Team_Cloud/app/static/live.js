@@ -94,6 +94,7 @@
       render();
     }catch(error){
       if(owner===identity()&&revision===state.revision){
+        if(error.status===429&&error.retryAfter)state.nextPoll=monotonic()+error.retryAfter*1000;
         if(error.status===409){
           clear();fillEmpty('Your account changed. Reloading your workspace…');window.location.reload();
         }else{state.data=null;fillEmpty('Live status is unavailable. It will be checked again shortly.');}

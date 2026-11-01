@@ -25,6 +25,7 @@ def _report(
         "id": project.id,
         "url": f"https://{host}/projects/{project.id}",
         "title": project.title,
+        "time_submitted": project.time_submitted,
         "score": assessment.score,
         "decision": assessment.decision,
         "reasons": list(assessment.reasons),

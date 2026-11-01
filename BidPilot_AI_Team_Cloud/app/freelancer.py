@@ -39,7 +39,7 @@ class FreelancerAPI:
         if self.base not in ('https://www.freelancer.com', 'https://www.freelancer-sandbox.com'):
             raise FreelancerError('Unrecognized Freelancer API host')
         token = str(token or '').strip()
-        if not token or len(token) > 4096 or not token.isascii() or any(c.isspace() for c in token):
+        if not token or len(token) > 4096 or any(not 33 <= ord(c) <= 126 for c in token):
             raise FreelancerError('Enter a valid Freelancer OAuth token without whitespace')
         self.token = token
 
@@ -141,7 +141,8 @@ class FreelancerAPI:
         if not isinstance(result, dict):
             raise FreelancerError('Bid response uncertain; check your Freelancer account before retrying')
         bid = result.get('bid') if isinstance(result.get('bid'), dict) else result
-        if not bid.get('id'):
+        bid_id = str(bid.get('id', ''))
+        if not 1 <= len(bid_id) <= 20 or not bid_id.isascii() or not bid_id.isdigit() or int(bid_id) <= 0:
             raise FreelancerError('Bid response uncertain; check your Freelancer account before retrying')
         return {**result, 'bid': bid}
 

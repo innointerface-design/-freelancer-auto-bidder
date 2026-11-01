@@ -383,7 +383,7 @@ class WebService:
         reports.sort(
             key=(lambda row: (-row.get("score", 0), -row.get("updated_at", 0)))
             if sort == "score"
-            else lambda row: -row.get("updated_at", 0)
+            else lambda row: -(row.get("time_submitted") or row.get("updated_at", 0))
         )
         return {
             "items": [self._public(row) for row in reports[offset : offset + limit]],

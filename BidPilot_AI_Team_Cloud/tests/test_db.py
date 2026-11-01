@@ -559,6 +559,7 @@ def test_explicit_test_mode_never_imports_neighboring_dotenv_credentials(tmp_pat
     (package / '__init__.py').write_text('')
     (package / 'db.py').write_bytes(Path(db.__file__).read_bytes())
     (package / 'billing_lifecycle.py').write_bytes(Path(db.__file__).with_name('billing_lifecycle.py').read_bytes())
+    (package / 'database_url.py').write_bytes(Path(db.__file__).with_name('database_url.py').read_bytes())
     (tmp_path / '.env').write_text(
         'GEMINI_API_KEY=synthetic-private-gemini-token\n'
         'OPENAI_API_KEY=synthetic-private-openai-token\n'

@@ -133,8 +133,10 @@ _CREDENTIAL_PATTERNS = (
     re.compile(r'(?<![A-Za-z0-9])(?:sk[-_][A-Za-z0-9_-]{8,}|AIza[A-Za-z0-9_-]{16,}|AQ\.[A-Za-z0-9._-]{12,}|key_[A-Za-z0-9_-]{8,})'),
 )
 _CREDENTIAL_ASSIGNMENT = re.compile(
-    r'(?i)\b(?:Freelancer-OAuth-V1|x-goog-api-key|api[_ -]?key|access[_ -]?token|password)'
-    r'\s*[:=]\s*(?P<quote>["\']?)(?P<value>[^\s"\'<>]{4,})'
+    r'(?i)\b(?:Freelancer-OAuth-V1|x-goog-api-key|(?:openai|gemini)[_ -]?(?:api[_ -]?)?key|api[_ -]?key|access[_ -]?token|password)'
+    r'["\']?\s*[:=]\s*(?:'
+    r'(?P<quote>["\'])(?:\\(?:[\s\S]|\Z)|(?!(?P=quote))[^\\])*(?:(?P=quote)|\Z)'
+    r'|(?P<value>[^\s"\'<>]{4,}))'
 )
 _ENV_NAME = r'''(?:"[A-Za-z_][A-Za-z0-9_]*"|'[A-Za-z_][A-Za-z0-9_]*')'''
 _ENV_REFERENCE = re.compile(

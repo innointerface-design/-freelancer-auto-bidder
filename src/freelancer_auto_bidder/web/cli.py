@@ -6,6 +6,7 @@ import argparse
 import getpass
 import logging
 import os
+import warnings
 
 from ..config import ConfigError
 from .security import hash_password
@@ -21,12 +22,18 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "hash-password":
         try:
-            password = getpass.getpass("Admin password (12+ characters): ")
-            confirmation = getpass.getpass("Confirm password: ")
+            # Refuse getpass's echoed stdin fallback when no secure terminal exists.
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", getpass.GetPassWarning)
+                password = getpass.getpass("Admin password (12+ characters): ")
+                confirmation = getpass.getpass("Confirm password: ")
             if password != confirmation:
                 parser.error("Passwords do not match")
             print(hash_password(password))
-        except (ValueError, EOFError) as exc:
+        except (getpass.GetPassWarning, EOFError, KeyboardInterrupt):
+            print("Secure password entry was cancelled or unavailable; no hash was generated.")
+            return 2
+        except ValueError as exc:
             print(str(exc))
             return 2
         return 0

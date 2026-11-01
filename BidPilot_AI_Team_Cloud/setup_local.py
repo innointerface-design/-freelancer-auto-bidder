@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import warnings
 
 from cryptography.fernet import Fernet
 
@@ -25,13 +26,23 @@ def ask_email(prompt, optional=False):
         print('Enter a valid email address.')
 
 
+def _hidden_password(prompt):
+    # getpass otherwise warns and falls back to echoed stdin without a terminal.
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', getpass.GetPassWarning)
+            return getpass.getpass(prompt)
+    except (getpass.GetPassWarning, EOFError, KeyboardInterrupt):
+        raise SystemExit('Secure password entry was cancelled or unavailable. No file written.') from None
+
+
 def ask_password(prompt):
     while True:
-        value = getpass.getpass(prompt)
+        value = _hidden_password(prompt)
         if len(value) < 12 or len(value) > 256 or '\n' in value or '\r' in value:
             print('Use 12–256 characters, without line breaks.')
             continue
-        if getpass.getpass('Confirm password: ') != value:
+        if _hidden_password('Confirm password: ') != value:
             print('Passwords did not match.')
             continue
         return value

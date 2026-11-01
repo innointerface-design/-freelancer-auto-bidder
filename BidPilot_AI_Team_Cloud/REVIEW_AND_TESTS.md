@@ -1,8 +1,26 @@
-# BidPilot AI — v4.4.2 features and verification
+# BidPilot AI — v4.5 features and verification
+
+## v4.5 complete uploaded-source review and interface polish — 1 November 2026
+
+Current release verification: **683 application tests +26 subtests passed** (117.32 seconds) and **354 legacy CLI/web tests passed** (6.52 seconds): **1,037 tests overall**. The final AI regressions include complete quoted secrets with spaces, escapes and unterminated quotes, in both prompts and displayed replies.
+
+The uploaded full GitHub archive was compared before editing: **140 of 140 tracked files matched commit7c50c72**, with no extra/missing source or private environment/database files. Review included the current BidPilot application and the older repository CLI/web dashboard. The complete GitHub source archive contains both; the standalone BidPilot ZIP contains the application and its own tests. Historical version archives remain historical.
+
+Confirmed backend fixes preserve disabled members' purchased future time on same-tier renewal; resolve relative SQLite paths against the application folder while rejecting ambiguous existing stores; load the explicit application `.env`; guard automation opt-in under the user lock/subscription check; and handle malformed/nonfinite/deeply nested stored project data with a safe Skip/409 instead of crashing the UI or sending a bid. A project corrupted after reservation cancels before I/O. Extreme bid-budget validation fails safely. No account store is moved, merged or recreated.
+
+Freelancer acknowledgements now require a valid decimal bid ID, and nonprintable OAuth header values are rejected before HTTP client creation. Pasted JSON/provider environment assignments are redacted before AI requests and displayed replies; pathological provider JSON preserves safe provider/auth error handling. Malformed payment environment settings fail closed with an administrator warning instead of taking down account/billing reads. Own-account authentication review required no new authentication mechanism; existing password/session/CSRF/lease regressions passed.
+
+Frontend fixes retain unsaved profile/model/token drafts, serialize connection/draft/submit actions, validate refreshed account identity, discard stale inspection/activity/live-bid responses, reject changed bid previews and respect 401/429/Retry-After semantics. The original dark/purple design now has consistent responsive spacing, field/button alignment, headings, action grids and accessible navigation/control labels. Manage users and payment review precede receiving configuration; all existing control IDs/inventories remain. No external asset or new runtime dependency was added.
+
+The older CLI/dashboard now rejects invalid OAuth header configuration cleanly, treats overflowing optional API numbers as unknown, sorts Most recent by project posting time and refuses echoed hidden-password fallback in its hash utility. The BidPilot setup helper also refuses fallback for both password prompts. These fixes are present in the full repository, separately from the standalone app ZIP.
+
+Actual Chromium passed **21 flows**, including eight views at desktop and768/390/360px, login, Settings navigation/draft retention/save, template/draft editing, demo submission gates, admin hierarchy, auto permission controls, manual expiry, paid denial, retained login/Billing, stale-plan protection, disabled targets and own paid-administrator expiry. **19 screenshots** were captured and layouts inspected; no JavaScript page errors or external requests occurred. An actual PostgreSQL17 smoke passed concurrent expiry with one audit, stale-grant protection, paid denial, same-password login and disabled-account prepaid renewal preserving dates/hash/login status. Fixtures/providers were synthetic; no live marketplace bid or payment settlement was attempted.
+
+Root Ruff, focused application syntax/name lint, Python compilation, all JavaScript syntax and whitespace checks pass. Existing upstream Starlette/httpx TestClient deprecation warnings remain. Full elimination of the standalone application's pre-existing style-lint backlog is not claimed. [Complete fix list, verification and safe update](V4_5_FULL_REVIEW_ROMAN_URDU.md).
 
 ## v4.4.2 manual paid-plan expiry and separate login controls — 31 October 2026
 
-Current release verification: **592 application tests passed plus 26 subtests**, 111.14 seconds. Root-repository Ruff, focused new/changed Python syntax/name checks, Python compilation, JavaScript syntax and diff checks pass. One upstream Starlette TestClient deprecation warning remains. This does not claim that the standalone application's pre-existing full style-lint backlog is eliminated.
+V4.4.2 release verification: **592 application tests passed plus 26 subtests**, 111.14 seconds. Root-repository Ruff, focused new/changed Python syntax/name checks, Python compilation, JavaScript syntax and diff checks pass. One upstream Starlette TestClient deprecation warning remains. This does not claim that the standalone application's pre-existing full style-lint backlog is eliminated.
 
 The user identified disabling the account as the cause of the reported sign-in failure. Manage users now offers **Expire plan** for paid active/trial plans, with an explicit target/plan confirmation. The existing account actions are labeled **Disable login / Enable login**, and each row reports its login status. Cancelling expiry makes no request. Founder accounts have no paid-expiry action; paid administrators can expire their own paid plan and retain sign-in/administration.
 

@@ -1,5 +1,7 @@
 # BidPilot AI — reviewed project
 
+**v4.5 full review:** [confirmed fixes, polished layouts, verification and safe update steps](V4_5_FULL_REVIEW_ROMAN_URDU.md). Disabled-account renewals preserve prepaid time, SQLite startup resolves consistently, damaged stored projects fail safely, expired automation remains off, pasted JSON secrets are redacted, and frontend drafts/account guards remain intact. Responsive spacing, alignment and admin hierarchy are refined. The legacy CLI/web code was also reviewed and fixed in the full repository.
+
 **v4.4.2 manual plan expiry:** [use the admin Expire plan button](V4_4_2_PLAN_EXPIRY_ROMAN_URDU.md) to stop paid access and automation while preserving account login, payment history and credentials. Disable login is labeled separately. Existing automatic expiry still applies.
 
 **v4.4.1 existing-account recovery:** [check the actual database/password and recover the same account](V4_4_1_ACCOUNT_RECOVERY_ROMAN_URDU.md). A local operator can diagnose401 with hidden password input or reset an existing enabled account's password, preserving its paid plan and dates. No new public reset endpoint or email service is added. V4.4's limiter fixes remain.

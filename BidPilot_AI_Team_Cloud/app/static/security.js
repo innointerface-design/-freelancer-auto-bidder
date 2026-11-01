@@ -37,6 +37,7 @@
       summary.textContent=password+encryption+`${result.active_sessions} active session(s). Payment approval does not require your password.`;
     }catch(error){
       if(owner!==identity()||revision!==state.loadRevision)return;
+      if(error?.status===429&&error.retryAfter)state.nextCheck=Date.now()+error.retryAfter*1000;
       if(error?.status===409){accountChanged();return;}
       summary.textContent='Security status is unavailable. Try opening Settings again shortly.';
     }finally{

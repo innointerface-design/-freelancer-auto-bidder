@@ -266,6 +266,32 @@ def test_search_filter_country_skill_currency_budget_and_page(tmp_path):
     assert service.jobs({"query": "DaVinci Resolve"})["total"] == 1
 
 
+def test_newest_jobs_follow_posting_time_after_assessments_are_refreshed(tmp_path):
+    service = make_service(tmp_path)
+    service.search("video")
+    assert [item["id"] for item in service.jobs({"sort": "newest"})["items"]] == list(
+        range(70001, 70009)
+    )
+
+    # Refreshing an older project's assessment must not make its posting newer.
+    with Store(service.settings.engine.database_path) as store:
+        report = next(item for item in service._reports() if item["id"] == 70008)
+        report["updated_at"] = 10**12
+        store.save_report(service.settings.engine.environment, report)
+    assert service.jobs({"sort": "newest"})["items"][0]["id"] == 70001
+
+
+def test_newest_jobs_keep_existing_reports_without_posting_time_readable(tmp_path):
+    service = make_service(tmp_path)
+    service.search("video")
+    with Store(service.settings.engine.database_path) as store:
+        for report in service._reports():
+            report.pop("time_submitted", None)
+            report["updated_at"] = report["id"]
+            store.save_report(service.settings.engine.environment, report)
+    assert service.jobs({"sort": "newest"})["items"][0]["id"] == 70008
+
+
 @pytest.mark.parametrize(
     "filters",
     [

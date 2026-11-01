@@ -179,6 +179,13 @@ def _settings_and_row(session):
             return None, row, ['Stored payment settings are invalid. Review and save corrected settings.']
     settings = default_settings()
     environment = _environment_values()
+    try:
+        for name, value in environment.items():
+            _text(value, multiline=name == 'bank')
+        if environment['whatsapp']:
+            settings.whatsapp = PaymentSettings.clean_contact(environment['whatsapp'][:40])
+    except ValueError:
+        return None, None, ['Environment payment settings are invalid. Review and save corrected settings.']
     for name in ('jazzcash', 'easypaisa'):
         if environment[name]:
             try:
@@ -192,8 +199,6 @@ def _settings_and_row(session):
             settings.stripe = StripeDestination(enabled=True, url=environment['stripe'][:1000])
         except ValueError:
             settings.stripe = StripeDestination(enabled=False, url=environment['stripe'][:1000])
-    if environment['whatsapp']:
-        settings.whatsapp = environment['whatsapp'][:40]
     return settings, None, []
 
 

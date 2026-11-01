@@ -78,8 +78,10 @@ class Settings:
         return f"https://{host}/api/"
 
     def validate(self, *, require_token: bool = True) -> None:
-        if not isinstance(self.token, str) or any(c in self.token for c in ("\r", "\n")):
-            raise ConfigError("OAuth token must be a single-line string")
+        if not isinstance(self.token, str) or any(
+            ord(character) <= 32 or ord(character) >= 127 for character in self.token
+        ):
+            raise ConfigError("OAuth token must contain printable ASCII without whitespace")
         if require_token and not self.token.strip():
             raise ConfigError(
                 "Set FREELANCER_OAUTH_TOKEN through your environment or secret manager"

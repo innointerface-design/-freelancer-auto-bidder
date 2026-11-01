@@ -7,14 +7,15 @@ from sqlalchemy.exc import IntegrityError
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
 from .billing_lifecycle import next_calendar_month, subscription_start
+from .database_url import resolve_database_url
 
+BASE = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 # Test processes provide isolated credentials explicitly. Loading a developer's
 # .env here could reintroduce real provider keys or an overriding password_B64.
 if os.getenv('APP_ENV', '').strip().lower() != 'test':
-    load_dotenv(interpolate=False)
+    load_dotenv(os.path.join(BASE, '.env'), interpolate=False)
 log = logging.getLogger('bidpilot.db')
-BASE = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-DB = os.getenv('DATABASE_URL', f'sqlite:///{BASE}/bidpilot_local.db')
+DB = resolve_database_url(os.getenv('DATABASE_URL', f'sqlite:///{BASE}/bidpilot_local.db'), BASE)
 # SQLAlchemy 2.1 defaults bare PostgreSQL URLs to psycopg3; this release ships psycopg2.
 if DB.startswith(('postgres://', 'postgresql://')):
     DB = 'postgresql+psycopg2://' + DB.split('://', 1)[1]
