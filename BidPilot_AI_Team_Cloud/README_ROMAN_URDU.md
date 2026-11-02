@@ -1,5 +1,7 @@
 # BidPilot AI — Ubuntu setup aur zaroori baatein
 
+**Latest v4.5.1:** naye uploaded ZIP ke tamam 152 files compare karke remaining backend/frontend aur purane CLI ke fixes [V4_5_1_REVIEW_ROMAN_URDU.md](V4_5_1_REVIEW_ROMAN_URDU.md) mein record hain. Existing account/database preserve karke [safe update steps](V4_5_FULL_REVIEW_ROMAN_URDU.md#existing-installation-safely-update-karein) follow karein.
+
 **Latest v4.4:** successful login ko failure count karne wala bug aur redundant registration login fix hain. Pro upgrade ke baad sign-in aur account lock recovery [V4_4_LOGIN_FIX_ROMAN_URDU.md](V4_4_LOGIN_FIX_ROMAN_URDU.md) mein dekhein; password/plan preserve rehte hain.
 
 **Latest v4.3:** receiving payment accounts, admin verification, automatic monthly expiry aur password/session controls [V4_3_BILLING_SECURITY_ROMAN_URDU.md](V4_3_BILLING_SECURITY_ROMAN_URDU.md) mein hain. Password payment ke liye admin ko na bhejein.
@@ -14,8 +16,8 @@ Poore commands aur production details `README.md` mein hain. Is ZIP mein koi cha
 
 ## Packages
 
-- **Starter: $10 / 30 din** — 150 bid attempts per billing period. Sending/uncertain attempts bhi quota mein count hotay hain taake retries se limit bypass na ho.
-- **Pro: $40 / 30 din** — monthly app quota nahi; Freelancer ke limits aur aapke hourly/daily controls phir bhi apply hotay hain.
+- **Starter: $10 / calendar month** — 150 bid attempts per billing period. Sending/uncertain attempts bhi quota mein count hotay hain taake retries se limit bypass na ho.
+- **Pro: $40 / calendar month** — monthly app quota nahi; Freelancer ke limits aur aapke hourly/daily controls phir bhi apply hotay hain.
 - **Do founders free** — owner/admin aur optional second founder. `setup_local.py` par emails/passwords set karein. Public signup se koi admin/free access nahi le sakta.
 
 Payment screen mein transaction ID submit karna payment verification nahi hai. Admin apne asli JazzCash/Easypaisa/bank/Stripe account mein settlement confirm karne ke baad approve kare. Naye grant ki activation aur agle calendar month ki expiry record hoti hai. Wohi active tier renew karne se next month expiry add hoti hai; current quota window reset nahi hoti. Existing expiry dates aur purane quota anchors preserve rehte hain. Automatic recurring charges ya verified merchant webhooks is version mein nahi hain. Public signup par automatic email verification ya password-reset email bhi nahi hai. Customer apna password admin ko nahi bhejta; account Security panel se khud change kar sakta hai.

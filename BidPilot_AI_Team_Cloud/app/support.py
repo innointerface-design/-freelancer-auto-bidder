@@ -182,15 +182,25 @@ def _quoted_history(history, secrets):
     return quoted_history[-10:]
 
 
+def _redact_snapshot(value, secrets):
+    if isinstance(value, str):
+        return redact_sensitive_text(value, secrets)
+    if isinstance(value, dict):
+        return {key: _redact_snapshot(item, secrets) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_redact_snapshot(item, secrets) for item in value]
+    return value
+
+
 def make_support_prompt(question, history, context, secrets=()):
     data = {
-        'safe_account_snapshot': context,
+        'safe_account_snapshot': _redact_snapshot(context, secrets),
         'recent_conversation': _quoted_history(history, secrets),
         'latest_question': redact_sensitive_text(question, secrets)[:3000],
     }
-    # Apply redaction to the complete serialized snapshot too; model names or
-    # imported preference text are never trusted to be free of pasted secrets.
-    quoted = redact_sensitive_text(json.dumps(data, ensure_ascii=False), secrets)
+    # Redact actual values before JSON escaping; escaped quotes can hide pasted
+    # assignments and a second redaction pass can corrupt safe code examples.
+    quoted = json.dumps(data, ensure_ascii=False)
     return SUPPORT_RULES + '\n\nApp knowledge:\n' + APP_KNOWLEDGE + '\n\nQuoted support data:\n' + quoted
 
 

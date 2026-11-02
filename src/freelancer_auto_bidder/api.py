@@ -59,7 +59,7 @@ DETAIL_FLAGS = {
 
 
 def _positive_id(value: Any) -> int:
-    if type(value) is not int or value <= 0:
+    if type(value) is not int or not 0 < value <= 2**63 - 1:
         raise APIError("API response did not contain a valid identifier")
     return value
 
@@ -192,7 +192,7 @@ class FreelancerAPI:
                 if not isinstance(result, dict):
                     raise ValueError
                 return result
-            except (ValueError, KeyError):
+            except (ValueError, KeyError, RecursionError):
                 if is_post:
                     raise SubmissionUncertain(
                         "Unrecognized bid response; remote outcome is unknown"

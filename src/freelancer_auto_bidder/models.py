@@ -35,7 +35,15 @@ def _object(value: Any) -> dict:
 
 
 def _text(value: Any) -> str:
-    return value.strip() if isinstance(value, str) else ""
+    if not isinstance(value, str):
+        return ""
+    # JSON may decode escaped lone surrogates; reject that listing before its
+    # text reaches SQLite, the report writer or a UTF-8 HTTP response.
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise ValueError("Project text contains invalid Unicode") from None
+    return value.strip()
 
 
 def _positive_id(value: Any) -> int:
@@ -46,7 +54,8 @@ def _positive_id(value: Any) -> int:
     if not isinstance(value, (int, str)):
         raise ValueError("Project and owner IDs must be positive integers")
     parsed = int(value)
-    if parsed <= 0:
+    # IDs are persisted in SQLite INTEGER columns, which are signed 64-bit.
+    if not 0 < parsed <= 2**63 - 1:
         raise ValueError("Project and owner IDs must be positive integers")
     return parsed
 

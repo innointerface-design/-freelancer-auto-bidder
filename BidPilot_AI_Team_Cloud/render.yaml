@@ -9,6 +9,7 @@ databases:
 services:
   - type: web
     name: bidpilot-team-web
+    rootDir: BidPilot_AI_Team_Cloud
     runtime: docker
     plan: starter
     healthCheckPath: /health
@@ -23,6 +24,7 @@ services:
 
   - type: worker
     name: bidpilot-team-scanner
+    rootDir: BidPilot_AI_Team_Cloud
     runtime: docker
     plan: starter
     dockerCommand: python -m app.worker

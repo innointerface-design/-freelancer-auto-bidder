@@ -30,8 +30,9 @@ def words(v):
 
 
 def score_job(job, skills, countries, excluded_keywords='', search_fields=None):
-    title = normalized_text(job.get('title'))
-    description = normalized_text(job.get('description'))
+    # Preserve hidden word boundaries until contains_term examines them.
+    title = str(job.get('title') or '')
+    description = str(job.get('description') or '')
     fields = {'title': title, 'description': description, 'skills': skill_text(job.get('skills'))}
     selected = set(fields) if search_fields is None else set(search_fields)
     text = ' '.join(value for field, value in fields.items() if field in selected)

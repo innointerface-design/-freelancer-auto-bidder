@@ -397,6 +397,16 @@ def _discover_gemini_models(api_key):
     }
 
 
+def _validated_provider_text(answer, provider):
+    try:
+        answer.encode('utf-8')
+        if '\x00' in answer:
+            raise ValueError
+    except (UnicodeError, ValueError):
+        raise AIProviderError(f'{provider} returned invalid text encoding') from None
+    return answer
+
+
 def _call_gemini(api_key, model, prompt, max_tokens=380, *, system_prompt=AI_SAFETY_RULES):
     headers = _gemini_headers(api_key)
     model = str(model or '').removeprefix('models/')
@@ -425,7 +435,7 @@ def _call_gemini(api_key, model, prompt, max_tokens=380, *, system_prompt=AI_SAF
             parts = []
         answer = '\n'.join(p['text'] for p in parts if isinstance(p, dict) and isinstance(p.get('text'), str) and not p.get('thought')).strip()
         if answer:
-            return answer
+            return _validated_provider_text(answer, 'Gemini')
     raise AIProviderError('Gemini returned no text. Check safety filters, selected model and output budget')
 
 
@@ -475,7 +485,7 @@ def _call_openai(api_key, model, prompt, max_tokens=380, *, system_prompt=AI_SAF
         message = choices[0].get('message')
         answer = message.get('content') if isinstance(message, dict) else None
         if isinstance(answer, str) and answer.strip():
-            return answer.strip()
+            return _validated_provider_text(answer.strip(), 'OpenAI')
     raise AIProviderError('OpenAI returned no text. Check model support and output budget')
 
 

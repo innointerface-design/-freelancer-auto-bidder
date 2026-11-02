@@ -1,11 +1,11 @@
 """Authenticated worker and saved-connection status, without remote API calls."""
-import json
 import time
 
 from fastapi import Depends, HTTPException
 
 from .advanced import AdvancedConfigError, load_advanced, schedule_allows
 from .db import Bid, Connection, Job, User, WorkerHeartbeat, subscription_active
+from .project_data import load_project_json
 
 
 HEARTBEAT_STALE_SECONDS = 35
@@ -39,8 +39,8 @@ def automation_status(session, uid, *, now=None):
         ).yield_per(200)
         for (data,) in candidates:
             try:
-                raw = json.loads(data)
-            except (TypeError, ValueError):
+                raw = load_project_json(data)
+            except (TypeError, ValueError, RecursionError):
                 continue
             if (isinstance(raw, dict) and not raw.get('demo')
                     and raw.get('environment') == connection.environment
@@ -87,7 +87,9 @@ def automation_status(session, uid, *, now=None):
         except HTTPException as error:
             state, reason = 'paused', str(error.detail)
         else:
-            if next_bid > now:
+            if consumed.filter(Bid.status == 'sending').first():
+                state, reason = 'paused', 'A bid is awaiting its result. If the worker was interrupted, check Freelancer before attempting another bid.'
+            elif next_bid > now:
                 state, reason = 'waiting_gap', 'Waiting for the configured minimum gap before another bid can be attempted.'
             elif scanning:
                 state, reason = 'scanning', 'A Freelancer project refresh is in progress. New matches are checked after the response.'

@@ -33,10 +33,11 @@ def parse_number(v):
     return None
 
 
-def normalized_text(value):
+def normalized_text(value, *, keep_formatting=False):
     text = unicodedata.normalize('NFKC', str(value or '')).casefold()
-    # Formatting characters and line breaks must not split excluded phrases.
-    text = ''.join(c for c in text if unicodedata.category(c) != 'Cf')
+    # The matcher must distinguish a hidden character within a word from one
+    # between words. Keep a single marker for either interpretation until then.
+    text = ''.join(('\u200b' if keep_formatting else '') if unicodedata.category(c) == 'Cf' else c for c in text)
     text = re.sub('[\u2010-\u2015\u2212]', '-', text)
     return re.sub(r'\s+', ' ', text).strip()
 
@@ -46,13 +47,17 @@ def _term_pattern(term):
     # Match whole terms, allowing spaces/hyphens between words. Escaping each
     # component also keeps user-supplied exclusion terms out of regex syntax.
     parts = re.split(r'[\s_-]+', term)
-    body = r'[\s_-]+'.join(re.escape(part) for part in parts)
-    return re.compile(r'(?<![\w+#])' + body + r'(?![\w+#])')
+    # Hidden formatting can occur inside a word (tele<ZWSP>gram), between
+    # words (registration<ZWSP>fee), or both in the same phrase.
+    body = r'[\s_\-\u200b]+'.join(r'\u200b*'.join(re.escape(c) for c in part) for part in parts)
+    # A hidden character at the edge must not turn a substring into a word:
+    # React<ZWSP>ion and x<ZWSP>React are still not the React skill.
+    return re.compile(r'(?<![\w+#\u200b])\u200b*' + body + r'\u200b*(?![\w+#\u200b])')
 
 
 def contains_term(text, term):
     term = normalized_text(term)
-    return bool(term and any(c.isalnum() for c in term) and _term_pattern(term).search(normalized_text(text)))
+    return bool(term and any(c.isalnum() for c in term) and _term_pattern(term).search(normalized_text(text, keep_formatting=True)))
 
 
 def country_code(value):
@@ -77,7 +82,7 @@ def skill_text(value):
 
 def extract_client_requirements(title, description):
     """Deep heuristic parser that reads the client brief and extracts deliverables, tools, and pain points."""
-    text = normalized_text(f"{title} {description}")
+    text = f"{title} {description}"
     deliverables = []
     if any(contains_term(text, k) for k in ('tiktok', 'reel', 'reels', 'short', 'shorts', 'vertical', '9:16')):
         deliverables.append('high-retention vertical short-form clips with dynamic hooks & synced captions')
@@ -101,7 +106,10 @@ def extract_client_requirements(title, description):
 def job_score(job):
     title = str(job.get('title') or '')
     description = str(job.get('description') or '')
-    haystack = normalized_text(title + ' ' + description + ' ' + skill_text(job.get('skills')))
+    source = title + ' ' + description + ' ' + skill_text(job.get('skills'))
+    # Relevance negations retain their original joined-word normalization;
+    # risk matching below separately retains hidden phrase boundaries.
+    haystack = normalized_text(source)
     haystack = re.sub(r'\b(?:no|not looking for|without)\s+(?:any\s+)?(?:video editor|video editing|motion graphics|ai video)\s*(?:involved|needed|required)?\b', ' ', haystack)
     matched = [name for name, terms in SKILL_GROUPS.items() if any(contains_term(haystack, term) for term in terms)]
     core = [x for x in matched if x in PRIMARY]
@@ -146,7 +154,7 @@ def job_score(job):
     now = time.time()
     hours = max(0, (now - posted) / 3600) if posted and 0 < posted <= now + 300 else None
     fresh = 5 if hours is not None and hours < 2 else (3 if hours is not None and hours < 24 else (1 if hours is not None and hours < 72 else 0))
-    red_flags = [x for x in RISK_TERMS if contains_term(haystack, x)]
+    red_flags = [x for x in RISK_TERMS if contains_term(source, x)]
     penalty = 40 if red_flags else 0
     score = max(0, min(100, int(skill + trust + budget + clarity + fresh - penalty)))
     if red_flags:

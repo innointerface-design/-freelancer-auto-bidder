@@ -452,7 +452,7 @@ def _auto_migrate_sqlite():
 
 
 def _valid_email(value):
-    return isinstance(value, str) and len(value) <= 240 and bool(re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', value))
+    return isinstance(value, str) and '\x00' not in value and len(value) <= 240 and bool(re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', value))
 
 
 _init_thread_lock = threading.RLock()
@@ -563,7 +563,7 @@ def _provision_optional_founder(s, owner_email):
         return
     try:
         second_password = _bootstrap_password('SECOND_FOUNDER_PASSWORD')
-        if not 12 <= len(second_password) <= 256 or second_password.startswith('SET_'):
+        if not 12 <= len(second_password) <= 256 or not second_password.strip() or second_password.startswith('SET_'):
             _optional_founder_warning()
             return
         founder_hash = hash_password(second_password)
@@ -594,7 +594,7 @@ def _initialize_database():
             # Mandatory owner bootstrap remains fail-closed. Obsolete bootstrap
             # secrets are not parsed after an owner has already been created.
             password = _bootstrap_password('ADMIN_PASSWORD')
-            if not _valid_email(email) or not 12 <= len(password) <= 256 or password.startswith('SET_'):
+            if not _valid_email(email) or not 12 <= len(password) <= 256 or not password.strip() or password.startswith('SET_'):
                 raise RuntimeError('Set ADMIN_EMAIL and a unique ADMIN_PASSWORD (12-256 chars)')
             if s.query(User).filter_by(email=email).first():
                 raise RuntimeError('ADMIN_EMAIL already belongs to a member; use a separate owner email')

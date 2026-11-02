@@ -133,7 +133,7 @@ def test_restore_cannot_inject_keys_roles_or_partial_settings(client_state, loca
 def test_restore_rejects_oversized_malformed_and_duplicate_json(client_state):
     client, _ = client_state
     headers = sign_in(client)
-    assert client.post('/api/settings/import', headers=headers, content=b' ' * (128 * 1024 + 1)).status_code == 413
+    assert client.post('/api/settings/import', headers=headers, content=b' ' * (512 * 1024 + 1)).status_code == 413
     for content in ('{"format":"bidpilot-settings","format":"other"}', '{"settings": NaN}', '[invalid'):
         assert client.post('/api/settings/import', headers=headers, content=content).status_code == 422
 

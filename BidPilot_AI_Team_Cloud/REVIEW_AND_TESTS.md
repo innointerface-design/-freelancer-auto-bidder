@@ -1,4 +1,18 @@
-# BidPilot AI — v4.5 features and verification
+# BidPilot AI — v4.5.1 features and verification
+
+## v4.5.1 uploaded-source follow-up — 2 November 2026
+
+The newly uploaded archive matched **152/152 tracked files at a09e361**, with no missing/extra files and a valid CRC. The current app and legacy CLI/web were reviewed together. Confirmed fixes and update guidance are in [the v4.5.1 review](V4_5_1_REVIEW_ROMAN_URDU.md).
+
+Final verification: **756 application tests +26 subtests passed** (154.70 seconds), and **372 legacy CLI/web tests passed** (6.89 seconds): **1,128 tests overall**. Root Ruff, application syntax/name checks, Python/JavaScript compilation, shell syntax, dependency consistency and whitespace checks pass. The existing upstream Starlette/httpx TestClient deprecation warning remains; elimination of the standalone application's pre-existing full style-lint backlog is not claimed.
+
+The current source rejects PostgreSQL-incompatible NUL text before database access while preserving exact password compatibility, rejects blank new-account passwords, validates AI response text before UTF-8 serialization/storage, redacts App help snapshot values before JSON escaping, and permits valid Unicode settings backups within a bounded512KiB limit. Invisible-character risk/exclusion matching preserves whole-word boundaries and existing relevance negations. Malformed saved projects no longer crash live status or starve later client greetings, and pending sends are reported as paused without being released or retried.
+
+Administrator plan/permission/login/expiry/payment clicks share an in-flight guard; own-plan changes refresh access without overwriting drafts. Team rows show connection/subscription/server readiness rather than claiming ON from saved switches. Legacy fixes cover Windows report writing when Unix fchmod is unavailable, oversized database IDs, malformed provider JSON, invalid Unicode listings and incomplete AI drafts. The Render blueprint resolves the monorepo's actual Docker build folder. No schema migration or runtime dependency was added.
+
+Actual Chromium passed **21 flows** with **19 screenshots**, desktop and768/390/360px checks, no page errors and no external requests. Plan expiry, login preservation, auto permission buttons and settings/draft flows remained working; mobile Team and desktop Overview layouts were inspected. Actual isolated **PostgreSQL17** passed concurrent expiry/one-audit/stale-grant protection, disabled-account prepaid renewal, same-password login, malformed-input HTTP422 without reflecting input, and literal NUL-containing password registration/re-login without alteration. Provider calls and payment/bid settlement used synthetic or blocked transports. Native Windows execution and production Render deployment were not performed; Windows portability was tested by removing the unavailable os.fchmod API.
+
+The full repository archive contains both applications and historical version downloads. The v4.5.1 standalone archive includes every tracked application file, including its pytest configuration, and excludes private environment files, databases and caches. Publishing GitHub source does not update an existing PC/server installation.
 
 ## v4.5 complete uploaded-source review and interface polish — 1 November 2026
 

@@ -1,7 +1,8 @@
 'use strict';
 const $=id=>document.getElementById(id),S={me:null,csrf:'',jobs:[],selected:null,nav:'overview',intent:null,team:[],seen:null,alerts:false,ai_provider:'',payment_methods:{},registering:false,epoch:0,refreshRevision:0,proposalRevision:0,editorRevision:0,bidBusy:false,authBusy:false,aiBusy:'',aiRevision:0,basicBusy:false,basicRevision:0,basicRendered:null,aiRendered:null,connectionBusy:false,liveBidsRevision:0,inspectRevision:0,activityRevision:0};
 const A={settings:null,templates:[],dirty:false,busy:'',loading:false,revision:0,loadRevision:0,restoreRevision:0,restore:null};
-const P={settings:null,busy:false,loading:false,dirty:false,revision:0,loadRevision:0,billingRevision:0,teamRevision:0,paymentBusy:false,decisionBusy:false,expiryBusy:false};
+const P={settings:null,busy:false,loading:false,dirty:false,revision:0,loadRevision:0,billingRevision:0,teamRevision:0,paymentBusy:false,decisionBusy:false,expiryBusy:false,memberBusy:false};
+const MAX_SETTINGS_BACKUP_BYTES=512*1024;
 const L={revision:0,cooldowns:new Map(),timer:null,unlockBusy:false,blockedKey:''};
 const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const usd=j=>{const c=j.currency||'Currency unknown',a=j.budget_min,b=j.budget_max;return a==null&&b==null?`${c} · Budget flexible`:`${c} ${a??'?'}${b!=null?'–'+b:''}${j.type?.includes('hour')?'/hr':''}`};
@@ -47,7 +48,7 @@ function resetSession(){
   window.clearAutomationLive?.();
   window.clearAccountSecurity?.();
   P.revision++;P.loadRevision++;P.billingRevision++;P.teamRevision++;
-  Object.assign(P,{settings:null,busy:false,loading:false,dirty:false,paymentBusy:false,decisionBusy:false,expiryBusy:false});
+  Object.assign(P,{settings:null,busy:false,loading:false,dirty:false,paymentBusy:false,decisionBusy:false,expiryBusy:false,memberBusy:false});
   document.querySelectorAll('form').forEach(form=>form.reset());
   for(const id of ['teamList','adminPaymentsList','teamOverview','billingSummaryBox','topJobs','jobsTable','proposalsBody','liveBidsBody','activityBody','myPlanBanner','myPaymentsList','paymentMethodsBox','paymentIdentity','paymentSettingsMessage','aiKeysBanner','aiTestResultBox','testChatBox','aiReviewBox','connectionBanner','autoStatus','autoWarning','chatStatus','aiStatus','modalNotice','modalTitle','modalDesc','modalMeta','modalTrust','modalReasons','confirmText','confirmProposal','accountName','accountEmail','greeting','avatar','planStatus','connStatus','lastScan','planBadgeTitle','planBadgeDesc','geminiMaskBadge','openaiMaskBadge'])$(id).textContent='';
   for(const id of ['bidProposal','bidAmount','bidDays','bidMilestone','loginEmail','loginPassword','registerName','connectToken','confirmation','jobSearch'])$(id).value='';
@@ -485,7 +486,7 @@ async function previewSettingsRestore(file){
   if(!file)return;
   try{
     if(!S.me||A.busy||S.basicBusy||S.aiBusy)throw Error('Wait until the current settings action finishes.');
-    if(file.size>131072)throw Error('Choose a settings backup smaller than 128 KB.');
+    if(file.size>MAX_SETTINGS_BACKUP_BYTES)throw Error('Choose a settings backup no larger than 512 KiB.');
     if(!/\.json$/i.test(file.name||''))throw Error('Choose a .json settings backup.');
     const data=validateSettingsBackup(JSON.parse(await file.text()));
     if(epoch!==S.epoch||accountId!==S.me?.id||revision!==A.restoreRevision)return;
@@ -670,6 +671,11 @@ if($('paymentSettingsForm')){
   };
 }
 
+function teamMutationBusy(){return P.memberBusy||P.expiryBusy||P.decisionBusy;}
+function renderTeamMutationControls(){
+  const busy=teamMutationBusy();
+  document.querySelectorAll('[data-toggleplan],[data-permission],[data-active],[data-expire-plan],[data-paydecide]').forEach(button=>button.disabled=busy);
+}
 async function loadTeam(){
   if(S.me?.role!=='admin')return;
   const epoch=S.epoch,accountId=S.me.id,revision=++P.teamRevision;
@@ -684,14 +690,15 @@ async function loadTeam(){
     const members=x.members.map(m=>{
       const isFree=m.plan_tier==='free_team';
       const canExpire=['paid_starter','paid_pro'].includes(m.plan_tier)&&['active','trial'].includes(m.subscription_status);
-      return `<div class="member-row"><div><b>${esc(m.name)}</b> <span class="tag ${isFree?'green':'orange'}">${isFree?'FOUNDER (free)':`${esc(planName(m.plan_tier))} ($${planPrice(m.plan_tier)}/mo · ${esc(m.subscription_status)})`}</span><small>${esc(m.email)} · ${m.subscription_started_at?'Activated: '+esc(age(m.subscription_started_at))+' · ':''}${m.subscription_expires?'Expires: '+esc(age(m.subscription_expires))+' · ':''}${m.connected?'Freelancer Connected':'Not Connected'} · Auto-Bid: ${m.auto_admin_allowed&&m.auto_requested?'ON':'OFF'} · Login: ${m.active?'enabled':'disabled'}</small></div><div class="member-actions"><button class="secondary" data-inspect="${esc(m.id)}">Activity</button><button class="secondary" data-toggleplan="${esc(m.id)}" data-tier="${m.plan_tier==='paid_starter'?'paid_pro':'paid_starter'}">${m.plan_tier==='paid_starter'?'Switch to Pro ($40)':'Switch to Starter ($10)'}</button>${canExpire?`<button class="secondary danger" data-expire-plan="${esc(m.id)}"${P.expiryBusy?' disabled':''}>Expire plan</button>`:''}${m.id===S.me.id?'':`<button class="secondary" data-permission="${esc(m.id)}" data-value="${m.auto_admin_allowed?'0':'1'}">${m.auto_admin_allowed?'Pause Auto':'Allow Auto'}</button><button class="secondary" data-active="${esc(m.id)}" data-value="${m.active?'0':'1'}">${m.active?'Disable login':'Enable login'}</button><button class="secondary" data-login-unlock="${esc(m.id)}">Reset sign-in lock</button>`}</div></div>`;
+      return `<div class="member-row"><div><b>${esc(m.name)}</b> <span class="tag ${isFree?'green':'orange'}">${isFree?'FOUNDER (free)':`${esc(planName(m.plan_tier))} ($${planPrice(m.plan_tier)}/mo · ${esc(m.subscription_status)})`}</span><small>${esc(m.email)} · ${m.subscription_started_at?'Activated: '+esc(age(m.subscription_started_at))+' · ':''}${m.subscription_expires?'Expires: '+esc(age(m.subscription_expires))+' · ':''}${m.connected?'Freelancer Connected':'Not Connected'} · Auto-Bid: ${esc(autoBidReadiness(m).status)} · Login: ${m.active?'enabled':'disabled'}</small></div><div class="member-actions"><button class="secondary" data-inspect="${esc(m.id)}">Activity</button><button class="secondary" data-toggleplan="${esc(m.id)}" data-tier="${m.plan_tier==='paid_starter'?'paid_pro':'paid_starter'}">${m.plan_tier==='paid_starter'?'Switch to Pro ($40)':'Switch to Starter ($10)'}</button>${canExpire?`<button class="secondary danger" data-expire-plan="${esc(m.id)}"${P.expiryBusy?' disabled':''}>Expire plan</button>`:''}${m.id===S.me.id?'':`<button class="secondary" data-permission="${esc(m.id)}" data-value="${m.auto_admin_allowed?'0':'1'}">${m.auto_admin_allowed?'Pause Auto':'Allow Auto'}</button><button class="secondary" data-active="${esc(m.id)}" data-value="${m.active?'0':'1'}">${m.active?'Disable login':'Enable login'}</button><button class="secondary" data-login-unlock="${esc(m.id)}">Reset sign-in lock</button>`}</div></div>`;
     }).join('')||'<div class="empty">No members</div>';
     $('teamList').innerHTML='<div class="notice mb-18">Expire plan stops paid access immediately and keeps login status unchanged. Enabled members can still sign in to renew. Disable login blocks account sign-in.</div>'+members;
+    renderTeamMutationControls();
   }catch(e){notify(e.message,true)}
 }
 
 async function expireMemberPlan(target){
-  if(S.me?.role!=='admin'||P.expiryBusy)return;
+  if(S.me?.role!=='admin'||teamMutationBusy())return;
   const member=S.team.find(item=>String(item.id)===target.dataset.expirePlan);
   if(!member||!['paid_starter','paid_pro'].includes(member.plan_tier)||!['active','trial'].includes(member.subscription_status))return;
   const epoch=S.epoch,accountId=S.me.id,memberId=member.id;
@@ -700,6 +707,7 @@ async function expireMemberPlan(target){
   if(!confirm(message)||epoch!==S.epoch||S.me?.id!==accountId||S.me.role!=='admin')return;
   P.expiryBusy=true;P.teamRevision++;target.disabled=true;
   document.querySelectorAll('[data-expire-plan]').forEach(button=>button.disabled=true);
+  renderTeamMutationControls();
   try{
     await post(`/api/team/${encodeURIComponent(memberId)}/expire-plan`,snapshot);
     if(epoch!==S.epoch||S.me?.id!==accountId||S.me.role!=='admin')return;
@@ -720,6 +728,7 @@ async function expireMemberPlan(target){
     if(epoch===S.epoch&&S.me?.id===accountId&&S.me.role==='admin'){
       P.expiryBusy=false;target.disabled=false;
       document.querySelectorAll('[data-expire-plan]').forEach(button=>button.disabled=false);
+      renderTeamMutationControls();
     }
   }
 }
@@ -961,27 +970,39 @@ document.addEventListener('click',async e=>{
     return;
   }
   if(target.dataset.paydecide){
-    if(S.me?.role!=='admin'||P.decisionBusy)return;
-    const epoch=S.epoch,accountId=S.me.id;P.decisionBusy=true;target.disabled=true;
+    if(S.me?.role!=='admin'||teamMutationBusy())return;
+    const epoch=S.epoch,accountId=S.me.id;P.decisionBusy=true;P.teamRevision++;target.disabled=true;renderTeamMutationControls();
     try{
       await post(`/api/admin/payments/${target.dataset.paydecide}/decide`,{action:target.dataset.act,expected_user_id:accountId});
       if(epoch!==S.epoch||S.me?.id!==accountId||S.me.role!=='admin')return;
       notify(target.dataset.act==='approve'?'Payment verified and subscription activated.':'Payment request rejected.');
       await loadTeam();
     }catch(error){if(epoch===S.epoch&&!billingSessionError(error))notify(error.message,true)}
-    finally{if(epoch===S.epoch){P.decisionBusy=false;target.disabled=false;}}
+    finally{if(epoch===S.epoch){P.decisionBusy=false;target.disabled=false;renderTeamMutationControls();}}
     return;
   }
+  if(S.me?.role!=='admin'||teamMutationBusy())return;
+  const epoch=S.epoch,accountId=S.me.id;
+  P.memberBusy=true;P.teamRevision++;target.disabled=true;renderTeamMutationControls();
   try{
+    let message='';
     if(target.dataset.toggleplan){
       const newTier=target.dataset.tier;
       await post(`/api/team/${target.dataset.toggleplan}/plan`,{plan_tier:newTier,subscription_status:'active',monthly_fee:planPrice(newTier)});
-      notify(`Updated member plan to ${planName(newTier)} ($${planPrice(newTier)}/month)`);
+      message=`Updated member plan to ${planName(newTier)} ($${planPrice(newTier)}/month)`;
     }
-    if(target.dataset.permission){await post(`/api/team/${target.dataset.permission}/permission`,{enabled:target.dataset.value==='1'});notify('Member auto-bid permission updated')}
-    if(target.dataset.active){await post(`/api/team/${target.dataset.active}/active`,{enabled:target.dataset.value==='1'});notify('Member status updated')}
+    if(target.dataset.permission){await post(`/api/team/${target.dataset.permission}/permission`,{enabled:target.dataset.value==='1'});message='Member auto-bid permission updated';}
+    if(target.dataset.active){await post(`/api/team/${target.dataset.active}/active`,{enabled:target.dataset.value==='1'});message='Member status updated';}
+    if(epoch!==S.epoch||S.me?.id!==accountId||S.me.role!=='admin')return;
+    if(target.dataset.toggleplan===String(accountId)){
+      const revision=++S.refreshRevision,account=await api('/api/me');
+      if(epoch!==S.epoch||S.me?.id!==accountId||S.me.role!=='admin')return;
+      if(revision===S.refreshRevision){applyAccount(account);renderStatus();}
+    }
+    notify(message);
     await loadTeam();
-  }catch(ex){notify(ex.message,true)}
+  }catch(ex){if(epoch===S.epoch&&S.me?.id===accountId&&!billingSessionError(ex))notify(ex.message,true)}
+  finally{if(epoch===S.epoch){P.memberBusy=false;target.disabled=false;renderTeamMutationControls();}}
 });
 
 $('aiReviewBtn').onclick=async()=>{if(!S.selected)return;const id=S.selected.id,revision=S.editorRevision;try{let x=await post(`/api/jobs/${id}/ai-review`);if(S.selected?.id!==id||revision!==S.editorRevision)return;$('aiReviewBox').textContent=x.review;$('aiReviewBox').classList.remove('hidden')}catch(e){notify(e.message,true)}};

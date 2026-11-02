@@ -13,7 +13,9 @@ from .logic import score_for_user
 from .project_data import load_project_json
 
 
-MAX_BACKUP_BYTES = 128 * 1024
+# A model-valid export with Unicode templates/keywords can exceed 128 KiB.
+# 512 KiB covers the bounded schema and pretty-printed UTF-8 browser download.
+MAX_BACKUP_BYTES = 512 * 1024
 
 
 class SettingsBackup(BaseModel):
@@ -135,7 +137,7 @@ def install_preferences_routes(app, current, mutate):
         async for chunk in request.stream():
             size += len(chunk)
             if size > MAX_BACKUP_BYTES:
-                raise HTTPException(413, 'Settings backup must be at most 128 KiB')
+                raise HTTPException(413, 'Settings backup must be at most 512 KiB')
             chunks.append(chunk)
         try:
             raw = json.loads(b''.join(chunks), object_pairs_hook=_json_object,

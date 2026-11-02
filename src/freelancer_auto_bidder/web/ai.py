@@ -120,7 +120,8 @@ class ProposalGenerator:
         if not 200 <= response.status_code < 300:
             raise AIError("AI provider is unavailable; the draft was not generated")
         try:
-            message = response.json()["choices"][0]["message"]
+            choice = response.json()["choices"][0]
+            message = choice["message"]
             text = message["content"]
             if (
                 not isinstance(text, str)
@@ -129,8 +130,12 @@ class ProposalGenerator:
                 or len(text.split()) > 140
                 or message.get("tool_calls")
                 or message.get("function_call")
+                or choice.get("finish_reason", "stop") != "stop"
             ):
                 raise ValueError
-        except (ValueError, TypeError, KeyError, IndexError, AttributeError):
+            # JSON permits escaped lone surrogates; stored/returned text must
+            # also be encodable as UTF-8 before it is reported as a draft.
+            text.encode("utf-8")
+        except (ValueError, TypeError, KeyError, IndexError, AttributeError, RecursionError):
             raise AIError("AI provider returned an invalid or oversized draft") from None
         return {"text": text.strip(), "provider": "openai"}

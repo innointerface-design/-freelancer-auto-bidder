@@ -1,5 +1,7 @@
 # BidPilot AI — reviewed project
 
+**v4.5.1 follow-up review:** [uploaded-source fixes and verification](V4_5_1_REVIEW_ROMAN_URDU.md). This patch repairs malformed input/provider errors, Unicode settings backup restore, hidden-character filtering, automation status and overlapping administrator actions, with additional fixes for the older CLI/web application.
+
 **v4.5 full review:** [confirmed fixes, polished layouts, verification and safe update steps](V4_5_FULL_REVIEW_ROMAN_URDU.md). Disabled-account renewals preserve prepaid time, SQLite startup resolves consistently, damaged stored projects fail safely, expired automation remains off, pasted JSON secrets are redacted, and frontend drafts/account guards remain intact. Responsive spacing, alignment and admin hierarchy are refined. The legacy CLI/web code was also reviewed and fixed in the full repository.
 
 **v4.4.2 manual plan expiry:** [use the admin Expire plan button](V4_4_2_PLAN_EXPIRY_ROMAN_URDU.md) to stop paid access and automation while preserving account login, payment history and credentials. Disable login is labeled separately. Existing automatic expiry still applies.
@@ -77,7 +79,7 @@ The Compose file creates a private PostgreSQL service, runs database initializat
 
 If reusing a development `.env`, the setup command leaves it unchanged. Edit `APP_ENV=production`, `PUBLIC_URL=https://your-domain`, `SITE_DOMAIN=your-domain`, and `SECURE_COOKIES=true` privately before deploying. Compose overrides `DATABASE_URL` to its PostgreSQL instance. Use a URL-safe generated `POSTGRES_PASSWORD`; changing it in `.env` after PostgreSQL initialization does **not** change the existing database password. Never remove/recreate the database volume merely to change credentials.
 
-Environment changes need recreation: `docker compose up -d --force-recreate web worker`. Do not run `docker compose config` in a shared terminal or paste its output; it expands secrets. Render users may use `render.yaml` as an alternative: configure shared variables once in its environment group, use the same Fernet key for web and worker, and set `PUBLIC_URL` to the actual HTTPS web URL. Hosting plans and provider prices should be checked with the host before deployment.
+Environment changes need recreation: `docker compose up -d --force-recreate web worker`. Do not run `docker compose config` in a shared terminal or paste its output; it expands secrets. Render users may select `BidPilot_AI_Team_Cloud/render.yaml` as the blueprint in this full GitHub repository: both services use `rootDir: BidPilot_AI_Team_Cloud` so their Docker build finds the application. If you instead publish only the contents of the standalone application folder as a separate repository, remove `rootDir` from both services. Configure shared variables once in the blueprint's environment group, use the same Fernet key for web and worker, and set `PUBLIC_URL` to the actual HTTPS web URL. Hosting plans and provider prices should be checked with the host before deployment.
 
 ## API setup and live validation
 

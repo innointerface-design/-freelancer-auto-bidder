@@ -21,7 +21,7 @@ def ask_email(prompt, optional=False):
         value = input(prompt).strip().lower()
         if optional and not value:
             return ''
-        if len(value) <= 240 and re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', value):
+        if '\x00' not in value and len(value) <= 240 and re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', value):
             return value
         print('Enter a valid email address.')
 
@@ -39,8 +39,8 @@ def _hidden_password(prompt):
 def ask_password(prompt):
     while True:
         value = _hidden_password(prompt)
-        if len(value) < 12 or len(value) > 256 or '\n' in value or '\r' in value:
-            print('Use 12–256 characters, without line breaks.')
+        if len(value) < 12 or len(value) > 256 or not value.strip() or '\n' in value or '\r' in value:
+            print('Use 12–256 characters, including a non-space character, without line breaks.')
             continue
         if _hidden_password('Confirm password: ') != value:
             print('Passwords did not match.')

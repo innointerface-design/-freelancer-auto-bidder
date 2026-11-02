@@ -372,8 +372,8 @@ vm.runInContext(source,sandbox);
  await vm.runInContext("$('exportSettingsBtn').onclick()",sandbox);
  assert.equal(downloadClicks,1);assert.match(node('advancedSettingsMessage').textContent,/without credentials/);
  // File-size guards and account changes prevent an earlier user's restore/load applying later.
- sandbox.tooLarge={name:'backup.json',size:131073,text:async()=>{throw Error('Must not read oversized file')}};
- await vm.runInContext('previewSettingsRestore(tooLarge)',sandbox);assert.match(node('settingsRestorePreview').textContent,/128 KB/);
+ sandbox.tooLarge={name:'backup.json',size:512*1024+1,text:async()=>{throw Error('Must not read oversized file')}};
+ await vm.runInContext('previewSettingsRestore(tooLarge)',sandbox);assert.match(node('settingsRestorePreview').textContent,/512 KiB/);
  vm.runInContext('A.settings=null;A.dirty=false;',sandbox);
  sandbox.fetch=async()=>new Promise(resolve=>{completeAdvancedLoad=resolve});
  const previousAdvancedLoad=vm.runInContext('loadAdvancedSettings()',sandbox);

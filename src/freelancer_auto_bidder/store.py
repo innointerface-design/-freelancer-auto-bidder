@@ -41,7 +41,10 @@ def write_report(path: str | Path, reports: list[dict[str, Any]]) -> None:
             delete=False,
         ) as stream:
             temporary = stream.name
-            os.fchmod(stream.fileno(), 0o600)
+            # tempfile creates this file privately. fchmod is Unix-only; retain
+            # the explicit mode check there without breaking native Windows.
+            if hasattr(os, "fchmod"):
+                os.fchmod(stream.fileno(), 0o600)
             json.dump(reports, stream, indent=2, ensure_ascii=False, allow_nan=False)
             stream.write("\n")
             stream.flush()

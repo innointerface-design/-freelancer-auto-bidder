@@ -125,6 +125,15 @@ async def secure_requests(request: Request, call_next):
 class InputModel(BaseModel):
     model_config = {'allow_inf_nan': False, 'extra': 'forbid'}
 
+    @field_validator('*')
+    @classmethod
+    def database_compatible_text(cls, value, info):
+        # PostgreSQL text cannot contain NUL. Passwords are hashed, never saved
+        # as text, and their exact existing value must remain usable at login.
+        if info.field_name != 'password' and isinstance(value, str) and '\x00' in value:
+            raise ValueError('Text must not contain a NUL character')
+        return value
+
 
 class LoginIn(InputModel):
     email: str = Field(min_length=5, max_length=240)
@@ -136,11 +145,15 @@ class RegisterIn(InputModel):
     name: str = Field(min_length=2, max_length=100)
     password: str = Field(min_length=12, max_length=256)
 
+    @field_validator('password')
+    @classmethod
+    def nonblank_new_password(cls, value):
+        if not value.strip():
+            raise ValueError('Password must include a non-space character')
+        return value
 
-class MemberIn(InputModel):
-    email: str = Field(min_length=5, max_length=240)
-    name: str = Field(min_length=2, max_length=100)
-    password: str = Field(min_length=12, max_length=256)
+
+class MemberIn(RegisterIn):
     plan_tier: Literal['free_team', 'paid_starter', 'paid_pro'] = 'paid_pro'
     subscription_status: Literal['active', 'trial', 'inactive', 'expired'] = 'active'
     monthly_fee: float = 40.0
@@ -298,7 +311,7 @@ def throttle(request, email, action):
 
 def clean_email(email):
     email = email.strip().lower()
-    if not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', email):
+    if '\x00' in email or not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', email):
         raise HTTPException(400, 'Invalid email')
     return email
 
@@ -1415,7 +1428,10 @@ def run_autochat_cycle(uid, *, stop_event=None):
             project = s.query(Job).filter_by(user_id=uid, remote_id=project_id).first()
             if not project or not s.query(Bid).filter_by(user_id=uid, job_id=project.id, status='submitted').first():
                 continue
-            raw = json.loads(project.data)
+            try:
+                raw = load_project_json(project.data)
+            except (TypeError, ValueError, RecursionError):
+                continue
             if not raw.get('environment') or not raw.get('account_id'):
                 continue
             if raw.get('environment') and raw['environment'] != snapshot[1]:
