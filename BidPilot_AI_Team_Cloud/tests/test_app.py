@@ -45,7 +45,7 @@ def live_job(sessions, uid, remote='901', flid='123'):
         if not s.query(db.Connection).filter_by(user_id=uid).first():
             s.add(db.Connection(user_id=uid, token_cipher=db.encrypt_secret('test-token-no-network'), freelancer_id=flid, environment='sandbox'))
         raw = {'id': remote, 'title': 'Python automation', 'description': 'Python backend automation service',
-               'skills': ['Python'], 'budget_min': 20, 'budget_max': 100, 'currency': 'USD',
+               'skills': ['Python'], 'payment_verified': True, 'budget_min': 20, 'budget_max': 100, 'currency': 'USD',
                'project_status': 'active', 'type': 'fixed', 'environment': 'sandbox', 'account_id': flid}
         j = db.Job(user_id=uid, remote_id=remote, data=json.dumps(raw), score=90)
         s.add(j)

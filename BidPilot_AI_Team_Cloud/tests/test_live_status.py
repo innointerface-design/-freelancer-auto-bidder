@@ -92,7 +92,7 @@ def test_pending_count_is_own_live_account_only_and_excludes_existing_bids(live_
         db.apply_plan(other, 'free_team')
         session.add(other)
         session.flush()
-        base = {'environment': 'sandbox', 'account_id': '123', 'project_status': 'active'}
+        base = {'payment_verified': True, 'environment': 'sandbox', 'account_id': '123', 'project_status': 'active'}
         variants = [{}, {'demo': True}, {'account_id': 'old'}, {'environment': 'production'},
                     {'project_status': 'closed'}, {'account_id': ''}]
         for index, override in enumerate(variants):

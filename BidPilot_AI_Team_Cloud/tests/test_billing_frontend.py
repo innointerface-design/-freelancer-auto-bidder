@@ -43,12 +43,12 @@ sandbox.user=user;sandbox.settings=settings;sandbox.methods=methods;sandbox.bill
  assert.match(node('paymentMethodsBox').innerHTML,/PK78NAYA1234503128315518/);assert.match(node('paymentMethodsBox').innerHTML,/PK81MEZN0029040112662811/);
  assert.ok(!node('paymentMethodsBox').innerHTML.includes('javascript:'));
  assert.equal(select.options.find(x=>x.value==='stripe').disabled,true);assert.equal(select.options.find(x=>x.value==='bank').disabled,true);
- assert.match(node('paymentIdentity').textContent,/Registered Full Name.*owner@example.test/);assert.match(node('paymentIdentity').textContent,/Never send your password/);
- assert.match(node('myPlanBanner').innerHTML,/Activated:/);assert.match(node('myPlanBanner').innerHTML,/Access expires:/);assert.match(node('myPlanBanner').innerHTML,/calendar month/);
- handler=async()=>reply({...bill,subscription_started_at:0,billing_period_started:1800000000});await run('loadBilling()');assert.match(node('myPlanBanner').innerHTML,/Activated: Not activated/);
+ assert.match(node('paymentIdentity').textContent,/Registered Full Name.*owner@example.test/);assert.match(fs.readFileSync('app/static/index.html','utf8'),/Never share your password, PIN or OTP/);
+ assert.match(node('myPlanBanner').innerHTML,/Activated/);assert.match(node('myPlanBanner').innerHTML,/Access expires/);assert.match(node('myPlanBanner').innerHTML,/\$10\/month/);assert.match(node('myPlanBanner').innerHTML,/\$40\/month/);
+ handler=async()=>reply({...bill,subscription_started_at:0,billing_period_started:1800000000});await run('loadBilling()');assert.match(node('myPlanBanner').innerHTML,/Activated<\/span><b>Not activated/);
  // Labels and bank details are inert, even if a malicious admin puts markup in them.
  handler=async()=>reply({...bill,payment_methods:{channels:[{id:'nayapay',label:'<img src=x>',details:'<svg onload=bad()>',account_title:'<script>bad()</script>'}]}});
- await run('loadBilling()');assert.ok(!node('paymentMethodsBox').innerHTML.includes('<svg'));assert.match(node('paymentMethodsBox').innerHTML,/&lt;svg/);
+ await run('loadBilling()');assert.ok(!node('paymentMethodsBox').innerHTML.includes('<svg onload=bad()>'));assert.match(node('paymentMethodsBox').innerHTML,/&lt;svg/);
  // A pending billing load cannot replace another local account's state.
  const old=deferred();handler=async()=>old.promise;const stale=run('loadBilling()');run('S.me={...user,id:2,name:"New account"}');node('paymentIdentity').textContent='NEW ACCOUNT';old.resolve(reply(bill));await stale;assert.equal(node('paymentIdentity').textContent,'NEW ACCOUNT');
  run('S.me={...user};S.payment_methods=methods');

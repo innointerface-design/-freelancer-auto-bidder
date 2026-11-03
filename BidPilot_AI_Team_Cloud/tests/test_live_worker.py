@@ -44,7 +44,7 @@ def live_database(tmp_path, monkeypatch):
 def project(remote='8801'):
     return {'id': remote, 'title': 'Python backend service',
             'description': 'Implement the supplied Python service with tests and documentation.',
-            'skills': ['Python'], 'currency': 'USD', 'type': 'fixed',
+            'skills': ['Python'], 'payment_verified': True, 'currency': 'USD', 'type': 'fixed',
             'budget_min': 20, 'budget_max': 100, 'owner_id': '456', 'project_status': 'active'}
 
 

@@ -1,4 +1,21 @@
-# BidPilot AI — v4.5.1 features and verification
+# BidPilot AI — v4.6 features and verification
+
+## v4.6 models, payment-based Blocked projects and interface polish — 3 November 2026
+
+Final source verification: **890 application tests +37 subtests passed** (312.16 seconds), and **372 legacy CLI/web tests passed** (12.70 seconds): **1,262 tests overall**. Root Ruff, application Python syntax/name checks, Python/JavaScript compilation, backup shell syntax, dependency consistency and whitespace checks pass. The existing upstream Starlette/httpx TestClient deprecation warning remains; the application's pre-existing full style-lint backlog is not represented as resolved.
+
+The final user clarification is payment-only: false, missing or unknown client payment verification sends the project to the new **Blocked** view and excludes it from Opportunities, top matches, alerts and the live automatic-bid queue. Explicit email/identity/phone booleans remain informational and do not block a payment-verified project. Shared classification applies to scoring, manual reservation, two-step preparation, automatic eligibility, dispatch revalidation and auto-greetings. Existing saved jobs are classified immediately; a successful rescan can return a newly payment-verified project to Opportunities. No customer login is disabled by this rule.
+
+Authenticated model discovery reads the effective saved/shared provider credential, lists text model candidates, caches per credential/configuration for six hours and bounds/throttles remote refreshes. New accessible IDs can appear without a source update. Saved and typed selections are preserved; catalog listing is explicitly not a generation/billing guarantee. Gemini generation-method metadata and obvious non-text model exclusions avoid offering image/audio-only work in the text editor. PostgreSQL model columns widen once from60 to120 characters; SQLite data is preserved without rebuilding tables.
+
+The explicit AI proposal button now attempts the selected provider even when a saved template exists. Automatic workers retain their template-first rules. Structured results report the actual provider/model or an identified fallback with safe failure, busy and cooldown guidance. No same-provider paid retry or output-budget increase is introduced. Existing proposal, amount, days and milestone survive fallback; edits made during a slow response remain intact and loading ends clearly. Known official OpenAI Codex/Pro/deep-research families use bounded Responses requests with store=false, completed assistant text only and no tools; ordinary/compatible models retain Chat Completions. OPENAI_API_MODE permits an explicit future protocol choice. Specialized models may require features this text editor does not enable.
+
+The original dark/purple interface has consistent local SVG icons, readable field labels and line spacing, aligned form controls and actions, a concise plan summary, receiving-account cards and full-width responsive transaction history. Real Chromium passed **27 flows with31 screenshots**, including all nine views at1440/768/390/360px, Blocked separation/search, model discovery/refresh with unsaved-draft preservation, AI success/fallback/delayed response, payment statuses, paid-plan dates, and expiry/permission/login preservation. No page errors, horizontal document overflow or external browser requests were observed.
+
+Actual isolated **PostgreSQL17** passed legacy VARCHAR60→120 migration, repeat-startup idempotence,120-character model persistence, unchanged account/password/encrypted credentials/plan data, concurrent expiry with one audit, stale-grant protection, disabled-account prepaid renewal and exact password login/input validation checks. Provider generation/catalog transports and marketplace sends were mocked or forbidden in automated checks; real API credentials, provider billing, bid acceptance and actual payment settlement were not exercised. No target-PC or production deployment is claimed.
+
+The standalone package includes all tracked application source/tests/docs and excludes private environment files, databases and caches. The full GitHub archive also includes the older CLI/web and historical downloads. [Roman Urdu changes and safe update commands](V4_6_MODELS_BLOCKED_UI_ROMAN_URDU.md).
+
 
 ## v4.5.1 uploaded-source follow-up — 2 November 2026
 

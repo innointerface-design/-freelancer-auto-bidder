@@ -33,7 +33,7 @@ def review_database(tmp_path, monkeypatch):
                             freelancer_id='123', environment='sandbox'))
         for remote_id in ('1001', '1002'):
             import json
-            raw = {'id': remote_id, 'title': 'Controlled Python sandbox project', 'skills': ['Python'], 'budget_min': 20,
+            raw = {'id': remote_id, 'title': 'Controlled Python sandbox project', 'skills': ['Python'], 'payment_verified': True, 'budget_min': 20,
                    'budget_max': 100, 'project_status': 'active', 'environment': 'sandbox',
                    'account_id': '123', 'currency': 'USD', 'type': 'fixed'}
             s.add(db.Job(user_id=customer_id, remote_id=remote_id, data=json.dumps(raw), score=99))

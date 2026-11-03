@@ -6,6 +6,7 @@ from fastapi import Depends, HTTPException
 from .advanced import AdvancedConfigError, load_advanced, schedule_allows
 from .db import Bid, Connection, Job, User, WorkerHeartbeat, subscription_active
 from .project_data import load_project_json
+from .verification import verification_block_reasons
 
 
 HEARTBEAT_STALE_SECONDS = 35
@@ -43,6 +44,7 @@ def automation_status(session, uid, *, now=None):
             except (TypeError, ValueError, RecursionError):
                 continue
             if (isinstance(raw, dict) and not raw.get('demo')
+                    and not verification_block_reasons(raw)
                     and raw.get('environment') == connection.environment
                     and str(raw.get('account_id') or '') == str(connection.freelancer_id)
                     and raw.get('project_status') == 'active'):

@@ -1,13 +1,16 @@
 'use strict';
-const $=id=>document.getElementById(id),S={me:null,csrf:'',jobs:[],selected:null,nav:'overview',intent:null,team:[],seen:null,alerts:false,ai_provider:'',payment_methods:{},registering:false,epoch:0,refreshRevision:0,proposalRevision:0,editorRevision:0,bidBusy:false,authBusy:false,aiBusy:'',aiRevision:0,basicBusy:false,basicRevision:0,basicRendered:null,aiRendered:null,connectionBusy:false,liveBidsRevision:0,inspectRevision:0,activityRevision:0};
+const $=id=>document.getElementById(id),S={me:null,csrf:'',jobs:[],selected:null,nav:'overview',intent:null,team:[],seen:null,alerts:false,ai_provider:'',payment_methods:{},registering:false,epoch:0,refreshRevision:0,proposalRevision:0,editorRevision:0,bidBusy:false,authBusy:false,aiBusy:'',aiRevision:0,basicBusy:false,basicRevision:0,basicRendered:null,aiRendered:null,connectionBusy:false,liveBidsRevision:0,inspectRevision:0,activityRevision:0,proposalBusy:false};
 const A={settings:null,templates:[],dirty:false,busy:'',loading:false,revision:0,loadRevision:0,restoreRevision:0,restore:null};
 const P={settings:null,busy:false,loading:false,dirty:false,revision:0,loadRevision:0,billingRevision:0,teamRevision:0,paymentBusy:false,decisionBusy:false,expiryBusy:false,memberBusy:false};
+const C={revision:0,loading:false,nextRefresh:0,data:null};
 const MAX_SETTINGS_BACKUP_BYTES=512*1024;
 const L={revision:0,cooldowns:new Map(),timer:null,unlockBusy:false,blockedKey:''};
 const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const uiIcon=name=>`<svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-${esc(name)}"></use></svg>`;
+function setButtonLabel(id,label,icon){const el=$(id);if(el){el.textContent=label;el.innerHTML=(icon?uiIcon(icon)+' ':'')+esc(label);}}
 const usd=j=>{const c=j.currency||'Currency unknown',a=j.budget_min,b=j.budget_max;return a==null&&b==null?`${c} · Budget flexible`:`${c} ${a??'?'}${b!=null?'–'+b:''}${j.type?.includes('hour')?'/hr':''}`};
 const age=t=>{if(!t)return 'Not scanned yet';return new Date(Number(t)*1000).toLocaleString()};
-const trust=j=>j.payment_verified===true?'Verified payment':j.payment_verified===false?'Unverified payment':'Payment unverified/new';
+const trust=j=>j.payment_verified===true?'Verified payment':j.payment_verified===false?'Unverified payment':'Payment verification unknown';
 const scoreStyle=n=>n>=68?'':n>=45?'medium':'low';
 const notify=(s,err=false)=>{if(!s||s==='Session changed')return;const e=$('toast');e.textContent=s;e.className='toast show'+(err?' error':'');clearTimeout(e.timer);e.timer=setTimeout(()=>e.className='toast',4800)};
 
@@ -18,7 +21,7 @@ function setAuthMode(registering){
   $('registerName').required=registering;
   $('loginPassword').minLength=registering?12:1;
   $('loginPassword').autocomplete=registering?'new-password':'current-password';
-  $('authSubmit').textContent=registering?'Create account →':'Sign in to workspace →';
+  setButtonLabel('authSubmit',registering?'Create account':'Sign in to workspace','arrow-right');
   $('authToggle').textContent=registering?'Already registered? Sign in':'New here? Create an account';
   $('loginMsg').textContent='';
   renderAuthControls();
@@ -36,25 +39,26 @@ function renderAuthControls(){
     L.blockedKey=key;L.timer=setTimeout(renderAuthControls,1000);
   }else{
     if(L.cooldowns.has(key))L.cooldowns.delete(key);
-    $('authSubmit').textContent=S.authBusy?'Signing in…':S.registering?'Create account →':'Sign in to workspace →';
+    setButtonLabel('authSubmit',S.authBusy?'Signing in…':S.registering?'Create account':'Sign in to workspace','arrow-right');
     if(L.blockedKey){$('loginMsg').textContent=L.blockedKey===key?'You can try again now.':'';L.blockedKey='';}
   }
 }
 function resetSession(){
   L.revision++;L.cooldowns.clear();L.unlockBusy=false;L.blockedKey='';if(L.timer!==null)clearTimeout(L.timer);L.timer=null;
+  C.revision++;Object.assign(C,{loading:false,nextRefresh:0,data:null});
   S.epoch++;S.refreshRevision++;S.proposalRevision++;S.editorRevision++;S.aiRevision++;S.basicRevision++;S.liveBidsRevision++;S.inspectRevision++;S.activityRevision++;
-  Object.assign(S,{me:null,csrf:'',jobs:[],selected:null,nav:'overview',intent:null,team:[],seen:null,alerts:false,ai_provider:'',payment_methods:{},bidBusy:false,authBusy:false,aiBusy:'',basicBusy:false,basicRendered:null,aiRendered:null,connectionBusy:false});
+  Object.assign(S,{me:null,csrf:'',jobs:[],selected:null,nav:'overview',intent:null,team:[],seen:null,alerts:false,ai_provider:'',payment_methods:{},bidBusy:false,proposalBusy:false,authBusy:false,aiBusy:'',basicBusy:false,basicRendered:null,aiRendered:null,connectionBusy:false});
   window.clearSupportChat?.();
   window.clearAutomationLive?.();
   window.clearAccountSecurity?.();
   P.revision++;P.loadRevision++;P.billingRevision++;P.teamRevision++;
   Object.assign(P,{settings:null,busy:false,loading:false,dirty:false,paymentBusy:false,decisionBusy:false,expiryBusy:false,memberBusy:false});
   document.querySelectorAll('form').forEach(form=>form.reset());
-  for(const id of ['teamList','adminPaymentsList','teamOverview','billingSummaryBox','topJobs','jobsTable','proposalsBody','liveBidsBody','activityBody','myPlanBanner','myPaymentsList','paymentMethodsBox','paymentIdentity','paymentSettingsMessage','aiKeysBanner','aiTestResultBox','testChatBox','aiReviewBox','connectionBanner','autoStatus','autoWarning','chatStatus','aiStatus','modalNotice','modalTitle','modalDesc','modalMeta','modalTrust','modalReasons','confirmText','confirmProposal','accountName','accountEmail','greeting','avatar','planStatus','connStatus','lastScan','planBadgeTitle','planBadgeDesc','geminiMaskBadge','openaiMaskBadge'])$(id).textContent='';
-  for(const id of ['bidProposal','bidAmount','bidDays','bidMilestone','loginEmail','loginPassword','registerName','connectToken','confirmation','jobSearch'])$(id).value='';
+  for(const id of ['blockedList','modelCatalogStatus','proposalAiStatus','geminiModels','openaiModels','teamList','adminPaymentsList','teamOverview','billingSummaryBox','topJobs','jobsTable','proposalsBody','liveBidsBody','activityBody','myPlanBanner','myPaymentsList','paymentMethodsBox','paymentIdentity','paymentSettingsMessage','aiKeysBanner','aiTestResultBox','testChatBox','aiReviewBox','connectionBanner','autoStatus','autoWarning','chatStatus','aiStatus','modalNotice','modalTitle','modalDesc','modalMeta','modalTrust','modalReasons','confirmText','confirmProposal','accountName','accountEmail','greeting','avatar','planStatus','connStatus','lastScan','planBadgeTitle','planBadgeDesc','geminiMaskBadge','openaiMaskBadge'])$(id).textContent='';
+  for(const id of ['bidProposal','bidAmount','bidDays','bidMilestone','loginEmail','loginPassword','registerName','connectToken','confirmation','jobSearch','blockedSearch'])$(id).value='';
   $('visitProject').removeAttribute('href');$('whatsappApproveBtn').removeAttribute('href');
   $('scoreFilter').value='0';$('countryFilter').value='';$('typeFilter').value='all';
-  for(const id of ['statJobs','statStrong','statDraft','statBids','sideCount'])$(id).textContent='0';
+  for(const id of ['statJobs','statStrong','statDraft','statBids','sideCount','blockedCount'])$(id).textContent='0';
   document.querySelectorAll('.admin-only').forEach(el=>el.classList.add('hidden'));
   $('teamOverview').classList.add('hidden');$('aiTestResultBox').classList.add('hidden');$('testChatBox').classList.add('hidden');
   resetAdvancedState();
@@ -125,7 +129,7 @@ async function refresh(){
     if(revision!==S.refreshRevision)return;
     applyAccount(account);renderStatus();
     if(S.seen&&S.alerts&&'Notification' in window&&Notification.permission==='granted'){
-      const newGood=jobs.jobs.filter(j=>!S.seen.has(j.remote_id)&&!j.demo&&j.score>=68);
+      const newGood=jobs.jobs.filter(j=>!S.seen.has(j.remote_id)&&!isBlockedJob(j)&&!j.demo&&j.score>=68);
       if(newGood.length)new Notification(`BidPilot: ${newGood.length} new strong matches`,{body:newGood.slice(0,2).map(j=>j.title).join(' · ')});
     }
     S.seen=new Set(jobs.jobs.map(j=>j.remote_id));
@@ -133,8 +137,9 @@ async function refresh(){
     if(S.selected){const latest=S.jobs.find(j=>j.id===S.selected.id);if(latest)S.selected={...latest};syncBidActions();}
     $('statJobs').textContent=stats.jobs;$('statStrong').textContent=stats.strong;
     $('statDraft').textContent=stats.drafts;$('statBids').textContent=stats.submitted;
-    $('sideCount').textContent=stats.jobs;
-    renderTopJobs();renderJobs();renderProposals();
+    $('sideCount').textContent=S.jobs.filter(j=>!isBlockedJob(j)).length;
+    if($('blockedCount'))$('blockedCount').textContent=S.jobs.filter(isBlockedJob).length;
+    renderTopJobs();renderJobs();renderBlockedJobs();renderProposals();
   }catch(e){notify(e.message,true)}
 }
 
@@ -145,12 +150,13 @@ function navigate(view){
   const panel=$('view-'+view);if(!panel)return;
   panel.classList.remove('hidden');
   document.querySelectorAll('[data-nav]').forEach(el=>el.classList.toggle('active',el.dataset.nav===view));
-  $('crumb').textContent=({overview:'Overview',jobs:'Opportunities',proposals:'My Proposals',activity:'Activity Log',settings:'AI & Bidder Settings',billing:'Subscription & Payment',team:'Team & SaaS Admin',support:'AI Chat'})[view]||'Dashboard';
+  $('crumb').textContent=({overview:'Overview',jobs:'Opportunities',blocked:'Blocked',proposals:'My Proposals',activity:'Activity Log',settings:'AI & Bidder Settings',billing:'Subscription & Payment',team:'Team & SaaS Admin',support:'AI Chat'})[view]||'Dashboard';
   if(view==='activity')loadActivity();
   if(view==='proposals'){renderProposals();loadLiveBids();}
   if(view==='team')loadTeam();
   if(view==='billing')loadBilling();
-  if(view==='settings'){renderSettings(true);loadAdvancedSettings();}
+  if(view==='settings'){renderSettings(true);loadAdvancedSettings();loadModelCatalog();}
+  if(view==='blocked')renderBlockedJobs();
   window.scrollTo(0,0);
 }
 
@@ -189,20 +195,36 @@ function renderStatus(){
   for(const id of ['topScan','pageScan','runAutoNow','refreshLiveBidsBtn'])$(id).disabled=!u.subscription_active||!!freelancerPauseReason(u);
   $('testChatBtn').disabled=!u.subscription_active;
   renderAIControls();renderAdvancedControls();renderAutomationSafety();renderConnectionControls();
-  $('proposalAI').textContent=u.subscription_active?'✧ AI Write Proposal (Gemini / OpenAI)':'✦ Template Proposal (demo)';
+  setButtonLabel('proposalAI',S.proposalBusy?'Writing proposal…':u.subscription_active?'AI Write Proposal (Gemini / OpenAI)':'Template Proposal (demo)','sparkles');
   syncBidActions();
   $('connectionBanner').textContent=u.connected?`Connected to @${u.freelancer_name} (${u.environment}). Token encrypted. ${freelancerPauseReason(u)|| (u.last_error?'Last error: '+u.last_error:'')}`:'Connect your Freelancer OAuth Token below to enable live scanning, automated bidding, and auto-chat replies.';
 }
 
 function renderTopJobs(){
-  const jobs=S.jobs.filter(j=>j.score>=65).slice(0,5);
+  const jobs=S.jobs.filter(j=>!isBlockedJob(j)&&j.score>=65).slice(0,5);
   $('topJobs').innerHTML=jobs.length?jobs.map(j=>`<button class="opportunity" data-job="${esc(j.id)}"><div><div class="job-title">${esc(j.title)}</div><div class="job-sub"><span>${esc(j.country||'Global')}</span><span>${esc(usd(j))}</span>${j.bid?`<span>Bid: ${esc(j.bid.status.toUpperCase())}</span>`:''}</div></div><div class="op-right"><div class="score-chip ${scoreStyle(j.score)}">${esc(j.score)}/100</div><div class="job-sub">AI Bid →</div></div></button>`).join(''):'<div class="empty"><b>No matches loaded yet</b>Click "Load demo projects" or connect Freelancer and scan.</div>';
 }
 
 function renderJobs(){
   const q=$('jobSearch').value.toLowerCase().trim(),min=Number($('scoreFilter').value),country=$('countryFilter').value,type=$('typeFilter').value;
-  let jobs=S.jobs.filter(j=>j.score>=min&&(!country||j.country_code===country)&&(type==='all'||(type==='demo')===!!j.demo)&&(!q||(j.title+' '+j.description+' '+(j.skills||[]).join(' ')+' '+j.country).toLowerCase().includes(q)));
+  let jobs=S.jobs.filter(j=>!isBlockedJob(j)&&j.score>=min&&(!country||j.country_code===country)&&(type==='all'||(type==='demo')===!!j.demo)&&(!q||(j.title+' '+j.description+' '+(j.skills||[]).join(' ')+' '+j.country).toLowerCase().includes(q)));
   $('jobsTable').innerHTML=jobs.length?jobs.map(j=>`<div class="job-card"><div class="jc-top"><div><h3>${esc(j.title)}</h3><div class="job-sub">${esc(j.country||'Global')} · ${esc(j.demo?'DEMO':'Live API')} · ${esc(j.client_name||'Client')}</div></div><div><span class="score-chip ${scoreStyle(j.score)}">${esc(j.score)}/100</span></div></div><div class="tags"><span class="tag ${j.payment_verified===true?'green':'orange'}">${esc(trust(j))}</span><span class="tag">${esc(j.decision)}</span>${j.bid?`<span class="tag green">Bid: ${esc(j.bid.status)} (${esc(j.bid.source)} · ${esc(j.bid.milestone_pct||100)}% MS)</span>`:''}</div><p>${esc((j.description||'').slice(0,230))}${(j.description||'').length>230?'…':''}</p><div class="jc-bottom"><b>${esc(usd(j))}</b><button class="primary" data-job="${esc(j.id)}">AI Proposal & Bid →</button></div></div>`).join(''):'<div class="empty"><b>No opportunities match these filters</b>Try lowering the score filter or load demo projects.</div>';
+}
+
+function blockedReasons(job){
+  const reasons=[];
+  if(job.payment_verified!==true)reasons.push(job.payment_verified===false?'Client payment is unverified':'Client payment verification is unknown');
+  const server=job.verification?.reasons||job.block_reasons||job.blocked_reasons||[];
+  if(Array.isArray(server))for(const reason of server)if(typeof reason==='string'&&reason&&!reasons.includes(reason))reasons.push(reason);
+  return reasons;
+}
+function isBlockedJob(job){return job.blocked===true||job.verification?.blocked===true||blockedReasons(job).length>0;}
+function renderBlockedJobs(){
+  const box=$('blockedList');if(!box)return;
+  const q=($('blockedSearch')?.value||'').trim().toLowerCase();
+  const jobs=S.jobs.filter(j=>isBlockedJob(j)&&(!q||[j.title,j.description,j.country,j.client_name,...blockedReasons(j)].join(' ').toLowerCase().includes(q)));
+  if($('blockedCount'))$('blockedCount').textContent=S.jobs.filter(isBlockedJob).length;
+  box.innerHTML=jobs.length?jobs.map(j=>`<article class="job-card blocked-card"><div class="jc-top"><div><h3>${esc(j.title)}</h3><div class="job-sub">${esc(j.country||'Global')} · ${esc(j.demo?'Demo':'Live API')} · ${esc(j.client_name||'Client')}</div></div><span class="tag orange">${uiIcon('blocked')} Blocked</span></div><ul class="blocked-reasons">${blockedReasons(j).map(reason=>`<li>${esc(reason)}</li>`).join('')}</ul><p>${esc((j.description||'').slice(0,230))}${(j.description||'').length>230?'…':''}</p><div class="jc-bottom"><b>${esc(usd(j))}</b><button class="secondary" data-job="${esc(j.id)}">Review details ${uiIcon('arrow-right')}</button></div></article>`).join(''):`<div class="empty"><b>${q?'No blocked projects match this search':'No blocked projects'}</b>${q?'Try another project, client or reason.':'Projects with unverified or unknown payment verification appear here after a scan.'}</div>`;
 }
 
 function renderProposals(){
@@ -226,13 +248,14 @@ async function openJob(id){
   $('bidDays').value=j.bid?.days??S.me.default_days??3;
   $('bidMilestone').value=j.bid?.milestone_pct??S.me.milestone_pct??100;
   $('aiReviewBox').classList.add('hidden');$('aiReviewBox').textContent='';
+  if($('proposalAiStatus')){$('proposalAiStatus').textContent='';$('proposalAiStatus').classList.add('hidden');}
   const alreadySent=['sending','submitted','uncertain'].includes(j.bid?.status);
   $('modalNotice').textContent=j.demo?'Demo Job: Test AI Proposal generation & saving drafts. Connect live Freelancer account for real bidding.':alreadySent?`Bid status: ${j.bid.status.toUpperCase()} (${j.bid.source}). Duplicate bids are prevented.`:'Click "⚡ 1-Click Instant Bid Now" to send immediately, or "Save draft".';
   const url=safeUrl(j.url);
   $('visitProject').href=url||'#';$('visitProject').classList.toggle('hidden',!url);
   syncBidActions();
   $('jobModal').classList.remove('hidden');
-  if(!$('bidProposal').value){await makeProposal(true)}
+  if(!$('bidProposal').value&&!isBlockedJob(j)){await makeProposal(true)}
 }
 
 function closeJob(){
@@ -243,28 +266,50 @@ function syncBidActions(){
   const j=S.selected,u=S.me;
   const sent=['sending','submitted','uncertain'].includes(j?.bid?.status);
   const missingUnits=!!j&&!j.demo&&(!/^[A-Z]{3}$/.test(j.currency||'')||!['fixed','hourly'].includes(j.type));
-  const disabled=!j||!u||j.demo||missingUnits||!u.connected||!u.subscription_active||!!freelancerPauseReason(u)||sent||S.bidBusy;
-  if(j)$('modalNotice').textContent=missingUnits?'This live project is missing its currency or pricing type. Scan again before bidding.':j.demo?'Demo project: generate proposals and save local drafts. Real bidding requires an active subscription and Freelancer connection.':sent?`Bid status: ${String(j.bid.status).toUpperCase()}. Check Freelancer before any further action.`:'Review the proposal, amount and listing currency before submitting a bid.';
+  const blocked=!!j&&isBlockedJob(j);
+  const disabled=!j||!u||j.demo||blocked||missingUnits||!u.connected||!u.subscription_active||!!freelancerPauseReason(u)||sent||S.bidBusy;
+  if(j)$('modalNotice').textContent=missingUnits?'This live project is missing its currency or pricing type. Scan again before bidding.':blocked?`Bidding blocked: ${blockedReasons(j).join('. ')}. A later scan must confirm verification before this project returns to Opportunities.`:j.demo?'Demo project: generate proposals and save local drafts. Real bidding requires an active subscription and Freelancer connection.':sent?`Bid status: ${String(j.bid.status).toUpperCase()}. Check Freelancer before any further action.`:'Review the proposal, amount and listing currency before submitting a bid.';
   $('prepareBid').disabled=disabled;$('instantBidBtn').disabled=disabled;
   $('saveDraft').disabled=!j||sent||S.bidBusy;
   $('aiReviewBtn').disabled=!u?.subscription_active||S.bidBusy;
-  $('proposalAI').disabled=S.bidBusy;$('proposalTemplate').disabled=S.bidBusy;
+  $('proposalAI').disabled=S.bidBusy||S.proposalBusy;$('proposalTemplate').disabled=S.bidBusy||S.proposalBusy;
 }
 
+function showProposalStatus(message,error=false){
+  const box=$('proposalAiStatus');if(!box)return;
+  box.textContent=message;box.classList.toggle('hidden',!message);box.classList.toggle('danger-txt',error);
+}
 async function makeProposal(ai){
-  if(!S.selected)return;
+  if(!S.selected||S.proposalBusy)return;
+  const selectedId=S.selected.id,revision=++S.proposalRevision,editorRevision=S.editorRevision,epoch=S.epoch;
+  const previous={proposal:$('bidProposal').value,amount:$('bidAmount').value,days:$('bidDays').value,milestone:$('bidMilestone').value};
+  const useCloud=ai&&S.me.subscription_active;
+  S.proposalBusy=true;syncBidActions();
+  setButtonLabel('proposalAI','Writing proposal…','sparkles');
+  showProposalStatus(useCloud?'Contacting your configured AI provider…':'Preparing a local template…');
   try{
-    const selectedId=S.selected.id,revision=++S.proposalRevision,editorRevision=S.editorRevision;
-    const previous={proposal:$('bidProposal').value,amount:$('bidAmount').value,days:$('bidDays').value,milestone:$('bidMilestone').value};
-    const useCloud=ai&&S.me.subscription_active;
     const x=await post(`/api/jobs/${selectedId}/${useCloud?'ai-proposal':'proposal'}`);
-    if(S.selected?.id!==selectedId||revision!==S.proposalRevision||editorRevision!==S.editorRevision)return;
-    if($('bidProposal').value===previous.proposal)$('bidProposal').value=x.proposal;
-    if(x.suggested_amount&&$('bidAmount').value===previous.amount)$('bidAmount').value=x.suggested_amount;
-    if(x.suggested_days&&$('bidDays').value===previous.days)$('bidDays').value=x.suggested_days;
-    if(x.suggested_milestone&&$('bidMilestone').value===previous.milestone)$('bidMilestone').value=x.suggested_milestone;
-    notify(useCloud?'Proposal generated. Review it before bidding; a template is used if AI is unavailable.':'Template proposal generated. Review and personalize it.');
-  }catch(e){notify(e.message,true)}
+    if(epoch!==S.epoch||S.selected?.id!==selectedId||revision!==S.proposalRevision)return;
+    if(editorRevision!==S.editorRevision){showProposalStatus('Proposal response received. Your newer edits were kept; review your draft before bidding.');return;}
+    const fallback=useCloud&&x.ai_used===false;
+    const preserveFallback=fallback&&!!previous.proposal.trim();
+    const proposalUnchanged=$('bidProposal').value===previous.proposal;
+    if(proposalUnchanged&&!preserveFallback)$('bidProposal').value=x.proposal;
+    if(!preserveFallback&&x.suggested_amount&&$('bidAmount').value===previous.amount)$('bidAmount').value=x.suggested_amount;
+    if(!preserveFallback&&x.suggested_days&&$('bidDays').value===previous.days)$('bidDays').value=x.suggested_days;
+    if(!preserveFallback&&x.suggested_milestone&&$('bidMilestone').value===previous.milestone)$('bidMilestone').value=x.suggested_milestone;
+    const provider=x.provider==='gemini'?'Google Gemini':x.provider==='openai'?'OpenAI':'';
+    const model=typeof x.model==='string'&&x.model?` · ${x.model}`:'';
+    let message=useCloud?(x.ai_used===true?`Generated with ${provider||'your AI provider'}${model}. Review before bidding.`:x.message||'A local template was prepared; AI generation was not confirmed.'):'Local template prepared. Review and personalize it.';
+    if(fallback&&!/template/i.test(message))message+=' A local template is available.';
+    if(Number.isFinite(x.retry_after)&&x.retry_after>0)message+=` Retry after ${Math.ceil(x.retry_after)} seconds.`;
+    if(preserveFallback||!proposalUnchanged)message+=' Your current proposal was kept.';
+    showProposalStatus(message,fallback);notify(message,fallback);
+  }catch(e){
+    if(epoch===S.epoch&&S.selected?.id===selectedId&&revision===S.proposalRevision){showProposalStatus(e.message,true);notify(e.message,true);}
+  }finally{
+    if(epoch===S.epoch){S.proposalBusy=false;syncBidActions();setButtonLabel('proposalAI',S.me?.subscription_active?'AI Write Proposal (Gemini / OpenAI)':'Template Proposal (demo)','sparkles');}
+  }
 }
 
 async function saveDraft(){
@@ -286,6 +331,7 @@ async function saveDraft(){
 async function instantBid(){
   if(!S.selected||S.bidBusy)return;
   const j=S.selected,revision=S.editorRevision,epoch=S.epoch,payload=readBidEditor();
+  if(isBlockedJob(j)){notify('This project is in Blocked. Verification must be confirmed before bidding.',true);return}
   if(j.demo){notify('Demo projects only support local drafts',true);return}
   if(payload.proposal.length<30){notify('Generate or enter a proposal of at least 30 characters before submitting.',true);return}
   S.bidBusy=true;syncBidActions();
@@ -301,6 +347,7 @@ async function instantBid(){
 async function prepareBid(){
   if(!S.selected||S.bidBusy)return;
   const j=S.selected,revision=S.editorRevision,epoch=S.epoch,payload=readBidEditor();
+  if(isBlockedJob(j)){notify('This project is in Blocked. Verification must be confirmed before bidding.',true);return}
   if(j.demo){notify('Demo cannot submit a real bid',true);return}
   S.bidBusy=true;syncBidActions();
   try{
@@ -355,6 +402,7 @@ function renderBasicSettings(preserveDrafts=false){
   for(const chk of ['auto_chat_greeting','allow_hourly','allow_any_currency','require_payment_verified','require_country_match','auto_requested']){
     if(form.elements[chk]&&(!preserveDrafts||!S.basicRendered||form.elements[chk].checked===S.basicRendered[chk]))form.elements[chk].checked=!!u[chk];
   }
+  if(form.elements.require_payment_verified)form.elements.require_payment_verified.checked=true;
   S.basicRendered=Object.fromEntries(BACKUP_BASIC_FIELDS.map(field=>[field,['auto_chat_greeting','allow_hourly','allow_any_currency','require_payment_verified','require_country_match','auto_requested'].includes(field)?!!u[field]:String(u[field]??'')]));
 }
 function renderAISettings(preserveDrafts=false){
@@ -584,16 +632,17 @@ async function loadBilling(){
     if(x.user_id!=null&&x.user_id!==accountId){resetSession();window.location.reload();return;}
     if(typeof x.subscription_active==='boolean'){Object.assign(S.me,{plan_tier:x.plan_tier,subscription_status:x.subscription_status,subscription_started_at:x.subscription_started_at,subscription_expires:x.subscription_expires,subscription_active:x.subscription_active});renderStatus();}
     const isFree=x.plan_tier==='free_team',start=x.subscription_started_at??x.billing_period_started??0;
-    $('myPlanBanner').innerHTML=isFree
-      ?'<b>✦ Founder account (free)</b><p>No subscription fee. Your configured bidding limits and Freelancer account limits still apply.</p>'
-      :`<b>✦ ${esc(planName(x.plan_tier))} ($${planPrice(x.plan_tier)}/month — ${esc(String(x.subscription_status).toUpperCase())})</b><p>Starter: $10/month, 150 bids per billing period. Pro: $40/month, no monthly app quota; your hourly, daily and Freelancer limits apply. New activations run to the same date next calendar month (month-end adjusts when needed). Existing saved expiry dates remain. An administrator verifies settled funds before activation.</p><div class="plan-dates"><span>Activated: ${esc(billingDate(start))}</span><span>Access expires: ${x.subscription_expires?esc(age(x.subscription_expires)):'No active expiry'}</span></div>`;
-    $('paymentIdentity').textContent=`Payment account: ${S.me.name||'Registered customer'} · ${S.me.email||''}. Your name and email identify this request. Never send your password, PIN or OTP to an administrator.`;
+    const active=x.subscription_active===true||isFree;
+    const status=isFree?'Free account':String(x.subscription_status||'pending');
+    const statusClass=active?'status-approved':['expired','inactive','cancelled'].includes(status)?'status-'+(status==='expired'?'expired':'inactive'):'status-pending';
+    $('myPlanBanner').innerHTML=`<div class="plan-summary-main"><div><div class="eyebrow">YOUR CURRENT PLAN</div><h2>${esc(planName(x.plan_tier))}</h2><span class="payment-status plan-status ${statusClass}">${esc(status)}</span></div><div class="plan-price">${isFree?'Free':`$${planPrice(x.plan_tier)}<small>/month</small>`}</div></div>${isFree?'<p>No subscription fee. Your configured bidding limits and Freelancer account limits still apply.</p>':`<div class="plan-facts"><div><span>Activated</span><b>${esc(billingDate(start))}</b></div><div><span>Access expires</span><b>${x.subscription_expires?esc(age(x.subscription_expires)):'No active expiry'}</b></div></div><div class="plan-comparison"><span><b>Starter · $10/month</b>150 bids per billing period</span><span><b>Pro · $40/month</b>No monthly app quota</span></div><p class="field-help">Hourly, daily and Freelancer limits apply. An administrator verifies payment before activating or renewing your plan.</p>`}`;
+    $('paymentIdentity').textContent=`For ${S.me.name||'Registered customer'} · ${S.me.email||''}. Submit the reference for this account.`;
     const pm=x.payment_methods||S.payment_methods||{};S.payment_methods=pm;
-    const channels=paymentChannels(pm),stripe=safePaymentUrl(pm.stripe_url);
+    const channels=paymentChannels(pm);
     $('paymentMethodsBox').innerHTML=channels.map(channel=>{
       const details=channel.id==='stripe'?safePaymentUrl(channel.details):'';
       if(channel.id==='stripe'&&!details)return '';
-      return `<div class="payment-method"><b>${esc(channel.label)}:</b> ${details?`<a href="${esc(details)}" target="_blank" rel="noopener noreferrer">Open payment provider ↗</a>`:esc(channel.details)}${channel.account_title?`<small>Account title: ${esc(channel.account_title)}</small>`:''}</div>`;
+      return `<div class="payment-method-card"><div class="payment-method-label">${uiIcon(channel.id==='stripe'?'card':'link')}<b>${esc(channel.label)}</b></div><div class="payment-method-value">${details?`<a href="${esc(details)}" target="_blank" rel="noopener noreferrer">Open payment provider ${uiIcon('arrow-up-right')}</a>`:`<code>${esc(channel.details)}</code>`}</div>${channel.account_title?`<small class="payment-method-title">Account title: ${esc(channel.account_title)}</small>`:''}</div>`;
     }).join('')||'Payment details are not configured. Contact the administrator before sending money.';
     const available=new Set(channels.filter(channel=>channel.id!=='stripe'||safePaymentUrl(channel.details)).map(channel=>channel.id));
     const methodSelect=$('paymentForm').elements.method;
@@ -604,7 +653,11 @@ async function loadBilling(){
     $('whatsappApproveBtn').classList.toggle('hidden',!wa);
     if(wa)$('whatsappApproveBtn').href=`https://wa.me/${wa}?text=${encodeURIComponent(`Salam! I submitted a BidPilot subscription payment for account ${S.me.email}. Please verify receipt.`)}`;
     else $('whatsappApproveBtn').removeAttribute('href');
-    $('myPaymentsList').innerHTML=(x.payments||[]).length?x.payments.map(p=>`<div class="activity-row"><div><b>${esc(planName(p.plan_tier))} · ${esc(p.method)} — ${esc(p.currency)} ${esc(p.amount)}</b><div class="job-sub">TID: ${esc(p.transaction_id)} · Status: <span class="tag ${p.status==='approved'?'green':'orange'}">${esc(String(p.status).toUpperCase())}</span>${p.reviewed_at?' · Reviewed: '+esc(age(p.reviewed_at)):''}</div></div><small>${esc(age(p.created))}</small></div>`).join(''):'<div class="empty">No payment submissions yet</div>';
+    $('myPaymentsList').innerHTML=(x.payments||[]).length?`<div class="payment-history-head" aria-hidden="true"><span>Plan & reference</span><span>Submitted</span><span>Amount</span><span>Status</span></div>`+x.payments.map(p=>{
+      const status=['pending','approved','rejected'].includes(p.status)?p.status:'pending';
+      return `<div class="payment-history-row"><div class="payment-history-main"><b>${esc(planName(p.plan_tier))} · ${esc(p.method)}</b><div class="payment-history-reference">TID: ${esc(p.transaction_id)}</div>${p.reviewed_at?`<small>Reviewed: ${esc(age(p.reviewed_at))}</small>`:''}</div><div class="payment-history-date"><small>Submitted</small>${esc(age(p.created))}</div><div class="payment-history-amount">${esc(p.currency)} ${esc(p.amount)}</div><span class="payment-status status-${status}">${esc(String(p.status||'pending').toUpperCase())}</span></div>`;
+    }).join(''):'<div class="empty"><b>No payment submissions yet</b>Your payment references and review status will appear here.</div>';
+
   }catch(error){if(epoch===S.epoch&&!billingSessionError(error))notify(error.message,true)}
 }
 
@@ -686,7 +739,7 @@ async function loadTeam(){
     S.team=x.members;
     const b=x.billing_summary||{};
     $('billingSummaryBox').innerHTML=`<b>SaaS Billing & Team Overview:</b> ${esc(b.free_team_count||0)} Founder Accounts (maximum 2) • ${esc(b.paid_subscribers_count||0)} Commercial Paid Users • <b>Pending Payment Approvals: ${esc(b.pending_payments||0)}</b> • <b>Estimated Monthly Revenue (MRR): $${esc(b.estimated_mrr_usd||0)}/mo</b>`;
-    $('adminPaymentsList').innerHTML=payData.payments.length?payData.payments.map(p=>`<div class="member-row"><div><b>${esc(p.user_name)} (${esc(p.user_email)})</b> <span class="tag ${p.status==='approved'?'green':'orange'}">${esc(p.status.toUpperCase())}</span><small>${esc(planName(p.plan_tier))} · ${esc(p.method)} · ${esc(p.currency)} ${esc(p.amount)} · TID: <b>${esc(p.transaction_id)}</b> ${p.sender_phone?'· Phone: '+esc(p.sender_phone):''} ${p.notes?'· '+esc(p.notes):''} · Submitted: ${esc(age(p.created))}${p.reviewed_at?' · Reviewed: '+esc(age(p.reviewed_at)):''}</small></div><div class="member-actions">${p.status==='pending'?`<button class="primary" data-paydecide="${esc(p.id)}" data-act="approve">✓ Approve & Activate</button><button class="secondary danger" data-paydecide="${esc(p.id)}" data-act="reject">✕ Reject</button>`:`<small>${esc(age(p.created))}</small>`}</div></div>`).join(''):'<div class="empty">No payment requests submitted yet</div>';
+    $('adminPaymentsList').innerHTML=payData.payments.length?payData.payments.map(p=>`<div class="member-row"><div><b>${esc(p.user_name)} (${esc(p.user_email)})</b> <span class="tag ${p.status==='approved'?'green':'orange'}">${esc(p.status.toUpperCase())}</span><small>${esc(planName(p.plan_tier))} · ${esc(p.method)} · ${esc(p.currency)} ${esc(p.amount)} · TID: <b>${esc(p.transaction_id)}</b> ${p.sender_phone?'· Phone: '+esc(p.sender_phone):''} ${p.notes?'· '+esc(p.notes):''} · Submitted: ${esc(age(p.created))}${p.reviewed_at?' · Reviewed: '+esc(age(p.reviewed_at)):''}</small></div><div class="member-actions">${p.status==='pending'?`<button class="primary" data-paydecide="${esc(p.id)}" data-act="approve">${uiIcon('check')} Approve & Activate</button><button class="secondary danger" data-paydecide="${esc(p.id)}" data-act="reject">${uiIcon('close')} Reject</button>`:`<small>${esc(age(p.created))}</small>`}</div></div>`).join(''):'<div class="empty">No payment requests submitted yet</div>';
     const members=x.members.map(m=>{
       const isFree=m.plan_tier==='free_team';
       const canExpire=['paid_starter','paid_pro'].includes(m.plan_tier)&&['active','trial'].includes(m.subscription_status);
@@ -768,6 +821,54 @@ $('runAutoNow').onclick=async()=>{
   }catch(e){notify(e.message,true)}finally{if(S.me)renderStatus()}
 };
 
+function renderModelCatalogControls(){
+  const button=$('refreshModelsBtn');if(button)button.disabled=C.loading||!!S.aiBusy||!S.me;
+}
+function renderModelCatalog(data){
+  const summaries=[];
+  for(const [provider,label,listId] of [['gemini','Google Gemini','geminiModels'],['openai','OpenAI','openaiModels']]){
+    const entry=data.providers?.[provider]||{},list=$(listId);
+    const models=Array.isArray(entry.models)?entry.models.filter(model=>model&&typeof model.id==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$/.test(model.id)):[];
+    const ids=[...new Set(models.map(model=>model.id))];
+    const selected=typeof entry.selected_model==='string'?entry.selected_model:'';
+    if(selected&&!ids.includes(selected))ids.unshift(selected);
+    if(list)list.innerHTML=ids.map(id=>`<option value="${esc(id)}">${esc(id===selected?'Saved selection':id)}</option>`).join('');
+    const state=entry.configured===false?'No saved key':`${models.length} model${models.length===1?'':'s'}${entry.status==='partial'?' · partial list':entry.status==='error'?' · unavailable':entry.status==='refreshing'?' · refreshing':''}`;
+    summaries.push(`<div class="model-catalog-provider"><b>${label}</b><span>${esc(state)}</span>${entry.message?`<small>${esc(entry.message)}</small>`:''}${entry.fetched_at?`<small>Updated ${esc(new Date(entry.fetched_at).toLocaleString())}</small>`:''}</div>`);
+  }
+  const box=$('modelCatalogStatus');if(box)box.innerHTML=summaries.join('')+'<p class="field-help">Choose a model above, then save. Lists refresh automatically while Settings is open. Your selected models stay unchanged. Listing does not verify generation access or API billing.</p>';
+}
+async function loadModelCatalog(force=false){
+  if(!S.me||C.loading||S.aiBusy)return;
+  if(!force&&C.data&&Date.now()<C.nextRefresh){renderModelCatalog(C.data);return;}
+  const epoch=S.epoch,accountId=S.me.id,revision=++C.revision;
+  C.loading=true;renderModelCatalogControls();
+  if($('modelCatalogStatus'))$('modelCatalogStatus').textContent='Loading models available to your saved API keys…';
+  try{
+    const data=await api('/api/ai/models?refresh='+(force?'true':'false')+'&expected_user_id='+encodeURIComponent(accountId));
+    if(epoch!==S.epoch||S.me?.id!==accountId||revision!==C.revision)return;
+    if(data.user_id!=null&&data.user_id!==accountId){resetSession();window.location.reload();return;}
+    C.data=data;
+    const times=Object.values(data.providers||{}).map(entry=>Date.parse(entry.refresh_after||'')).filter(value=>Number.isFinite(value)&&value>Date.now());
+    const interval=Number(data.refresh_interval_seconds)||21600;
+    const failed=Object.values(data.providers||{}).some(entry=>['error','partial','refreshing'].includes(entry.status));
+    C.nextRefresh=times.length?Math.min(...times):Date.now()+(failed?60:Math.max(60,Math.min(21600,interval)))*1000;
+    renderModelCatalog(data);
+  }catch(error){
+    if(epoch!==S.epoch||S.me?.id!==accountId||revision!==C.revision)return;
+    C.nextRefresh=Date.now()+60000;
+    if(C.data)renderModelCatalog(C.data);
+    if($('modelCatalogStatus')){
+      const message='Could not refresh model lists. '+error.message+' Your selected models are unchanged.';
+      if(C.data)$('modelCatalogStatus').innerHTML+=`<p class="field-help danger-txt">${esc(message)}</p>`;
+      else $('modelCatalogStatus').textContent=message;
+    }
+  }finally{
+    if(epoch===S.epoch&&revision===C.revision){C.loading=false;renderModelCatalogControls();}
+  }
+}
+if($('refreshModelsBtn'))$('refreshModelsBtn').onclick=()=>loadModelCatalog(true);
+
 function aiFormSettings(){
   const f=$('aiKeysForm');
   return {
@@ -789,6 +890,7 @@ function renderAIControls(){
   const busy=!!S.aiBusy||S.basicBusy||!!A.busy;
   if(submit)submit.disabled=busy;
   if($('testAiKeysBtn'))$('testAiKeysBtn').disabled=busy||!S.me?.subscription_active;
+  renderModelCatalogControls();
 }
 function aiSettingsChanged(){
   S.aiRevision++;
@@ -821,11 +923,12 @@ if($('aiKeysForm')){
         else if(field==='clear_gemini'||field==='clear_openai')f.elements[field].checked=value===snapshot[field]?false:value;
         else if(value!==snapshot[field])f.elements[field].value=value;
       }
+      C.revision++;Object.assign(C,{loading:false,nextRefresh:0,data:null});
       const pending=hasUnsavedAISettings();
       $('aiTestResultBox').textContent=pending?'Configuration saved. Newer edits are still unsaved; save them before testing.':'Configuration saved. Click Test saved AI keys to verify these settings.';
       $('aiTestResultBox').classList.remove('hidden');
       notify(pending?'Earlier settings saved. Your newer edits are still unsaved.':'AI keys encrypted and saved. Run a saved-key test to verify access.');
-    }catch(ex){notify(ex.message,true)}finally{if(epoch===S.epoch){S.aiBusy='';renderAdvancedControls();}}
+    }catch(ex){notify(ex.message,true)}finally{if(epoch===S.epoch){S.aiBusy='';renderAdvancedControls();if(!C.data)loadModelCatalog();}}
   };
 }
 
@@ -860,7 +963,7 @@ function aiDiagnosticsHTML(g,o){
 }
 
 if($('testAiKeysBtn')){
-  $('testAiKeysBtn').textContent='Test saved AI keys';
+  setButtonLabel('testAiKeysBtn','Test saved AI keys','bolt');
   $('testAiKeysBtn').onclick=async()=>{
     if(S.aiBusy||S.basicBusy||A.busy||!S.me)return;
     if(hasUnsavedAISettings()){
@@ -950,6 +1053,7 @@ $('logout').onclick=async()=>{try{await post('/api/logout');resetSession()}catch
 $('findJobs').onclick=()=>navigate('jobs');$('topScan').onclick=manualScan;$('pageScan').onclick=manualScan;
 $('demoButton').onclick=async()=>{try{const x=await post('/api/demo');notify(`${x.new} demo opportunities loaded`);await refresh();navigate('jobs')}catch(e){notify(e.message,true)}};
 document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>navigate(b.dataset.nav));
+if($('blockedSearch'))$('blockedSearch').addEventListener('input',renderBlockedJobs);
 for(const id of ['jobSearch','scoreFilter','countryFilter','typeFilter'])$(id).addEventListener(id==='jobSearch'?'input':'change',renderJobs);
 
 document.addEventListener('click',async e=>{
@@ -1023,6 +1127,7 @@ $('settingsForm').onsubmit=async e=>{
   for(const k of ['name','skills','search_terms','excluded_keywords','countries','portfolio','description','proposal_tone','bid_strategy','chat_greeting_template'])data[k]=form.elements[k].value;
   for(const k of ['default_days','milestone_pct','min_score','min_budget','max_bid','max_daily','max_hourly'])data[k]=Number(form.elements[k].value);
   for(const chk of ['auto_chat_greeting','allow_hourly','allow_any_currency','require_payment_verified','require_country_match','auto_requested'])data[chk]=form.elements[chk].checked;
+  data.require_payment_verified=true;
   S.basicBusy=true;renderAdvancedControls();
   try{
     const x=await post('/api/settings',data);
@@ -1094,7 +1199,7 @@ $('memberForm').onsubmit=async e=>{
 };
 
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeJob()});
-setInterval(()=>{if(S.me&&!document.hidden)refresh()},30000);
+setInterval(()=>{if(S.me&&!document.hidden){refresh();if(S.nav==='settings'&&Date.now()>=C.nextRefresh)loadModelCatalog();}},30000);
 (async()=>{await initialize()})();
 
 

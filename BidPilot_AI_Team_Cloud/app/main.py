@@ -18,7 +18,7 @@ from .db import (
     plan_config, apply_plan, subscription_active
 )
 from .logic import score_job, score_for_user, make_proposal, auto_eligible, price_for
-from .integrations import get_client, scan_for_user, extract_skills, ai_proposal, ai_review, ai_chat_reply, test_ai_connection, resolve_ai_credentials, fetch_live_bids
+from .integrations import get_client, scan_for_user, extract_skills, ai_proposal, ai_proposal_result, ai_review, ai_chat_reply, test_ai_connection, resolve_ai_credentials, fetch_live_bids
 from .freelancer import FreelancerAPI, FreelancerError
 from .advanced import AdvancedConfigError, evaluate_filters, load_advanced, schedule_allows
 from .billing_lifecycle import (PERIOD_LABEL, BILLING_TIMEZONE, subscription_start, renewal_expiry,
@@ -27,6 +27,8 @@ from .payment_settings import public_payment_methods, payment_method_configured,
 from .auth_limits import (LoginRateLimited, reserve_login, finish_login, release_login,
                           lock_identifiers, unlock_account_failures)
 from .project_data import load_project_json
+from .verification import classify_verification, verification_block_reasons
+from .model_catalog import get_model_catalog
 
 log = logging.getLogger('bidpilot')
 DUMMY_PASSWORD_HASH = hash_password(secrets.token_urlsafe(32))
@@ -198,9 +200,9 @@ class PaymentDecisionIn(InputModel):
 class AIKeysIn(InputModel):
     preferred_ai: Literal['auto', 'gemini', 'openai', 'smart_builtin'] = 'auto'
     gemini_key: str = Field(default='', max_length=500)
-    gemini_model: str = Field(default='gemini-3.5-flash-lite', max_length=60)
+    gemini_model: str = Field(default='gemini-3.5-flash-lite', max_length=120)
     openai_key: str = Field(default='', max_length=500)
-    openai_model: str = Field(default='gpt-4.1-mini', max_length=60)
+    openai_model: str = Field(default='gpt-4.1-mini', max_length=120)
     clear_gemini: bool = False
     clear_openai: bool = False
 
@@ -367,13 +369,18 @@ def pack_job(j):
         reasons = []
     reasons = [reason for reason in reasons if isinstance(reason, str)]
     invalid = bool(d.get('data_error'))
+    verification = classify_verification(d)
     return {
         **d,
         'id': j.id,
         'remote_id': j.remote_id,
         'score': 0 if invalid else j.score,
-        'decision': 'Skip' if invalid else j.decision,
-        'reasons': ['Saved project data is unavailable; scan again'] if invalid else reasons
+        'decision': 'Skip' if invalid or verification['blocked'] else j.decision,
+        'verification': verification,
+        'blocked': verification['blocked'],
+        'block_reasons': verification['reasons'],
+        'reasons': (['Saved project data is unavailable; scan again'] if invalid
+                    else list(dict.fromkeys(verification['reasons'] + reasons)))
     }
 
 
@@ -530,6 +537,18 @@ def save_ai_keys(x: AIKeysIn, uid: int = Depends(mutate)):
             'user': public_user(u, c),
             'ai_provider': ' + '.join(active_providers) if active_providers else 'Local proposal templates (no live AI connection verified)'
         }
+
+
+@app.get('/api/ai/models')
+def ai_models(refresh: bool = False, expected_user_id: int | None = None, uid: int = Depends(current)):
+    if expected_user_id is not None and expected_user_id != uid:
+        raise HTTPException(409, 'Account changed; refresh before loading models')
+    # Discovery is read-only and does not generate billable text. The helper
+    # bounds, caches and serializes remote lookups per credential/configuration.
+    with SessionLocal() as s:
+        user = s.get(User, uid)
+        s.expunge(user)
+    return get_model_catalog(user, force=refresh)
 
 
 @app.post('/api/ai-keys/test')
@@ -1168,6 +1187,9 @@ def reserve_bid(s, uid, job_id, *, draft=None, intent=None, source='manual'):
     u = require_subscription(s, uid)
     j = owned(s, Job, job_id, uid)
     raw = project_data(j)
+    blocked = verification_block_reasons(raw)
+    if blocked:
+        raise HTTPException(403, 'Project is blocked: ' + '; '.join(blocked))
     c = s.query(Connection).filter_by(user_id=uid).first()
     if not c or raw.get('demo'):
         raise HTTPException(403, 'Connect a Freelancer account and use a live project')
@@ -1249,6 +1271,8 @@ def send_reserved(bid_id, remote_id, connection_id, environment, freelancer_id, 
             reason = 'Production bidding is disabled'
         elif not active_project(raw) or not valid_amount(raw, b.amount) or not u.min_budget <= b.amount <= u.max_bid:
             reason = 'Project or bid limits changed before dispatch'
+        elif verification_block_reasons(raw):
+            reason = 'Project is blocked: ' + '; '.join(verification_block_reasons(raw))
         elif b.source == 'auto' and not auto_eligible(raw, j.score, u, c, PLATFORM_AUTO)[0]:
             reason = 'Automation was paused or project eligibility changed'
         if not reason:
@@ -1432,6 +1456,8 @@ def run_autochat_cycle(uid, *, stop_event=None):
                 raw = load_project_json(project.data)
             except (TypeError, ValueError, RecursionError):
                 continue
+            if verification_block_reasons(raw):
+                continue
             if not raw.get('environment') or not raw.get('account_id'):
                 continue
             if raw.get('environment') and raw['environment'] != snapshot[1]:
@@ -1466,6 +1492,9 @@ def run_autochat_cycle(uid, *, stop_event=None):
                     return {'replied': count}
             except (HTTPException, AdvancedConfigError):
                 return {'replied': count}
+            current_project = s.query(Job).filter_by(user_id=uid, remote_id=project_id).first()
+            if not current_project or verification_block_reasons(project_data(current_project, display=True)):
+                continue
             record = ChatGreeted(user_id=uid, thread_id=tid, project_id=project_id, client_name=name, reply_text=reply, status='sending')
             s.add(record)
             try:
@@ -1672,11 +1701,11 @@ def proposal_ai(job_id: int, uid: int = Depends(mutate)):
         u = s.get(User, uid)
         job = project_data(j)
         try:
-            proposal_text = ai_proposal(job, u)
+            result = ai_proposal_result(job, u)
         except AdvancedConfigError:
             raise HTTPException(400, 'Saved proposal template is invalid for this project. Review your advanced settings.') from None
         return {
-            'proposal': proposal_text,
+            **result,
             'suggested_amount': price_for(job, u),
             'suggested_days': getattr(u, 'default_days', 3) or 3,
             'suggested_milestone': getattr(u, 'milestone_pct', 100) or 100
@@ -1736,6 +1765,9 @@ def prepare_bid(job_id: int, uid: int = Depends(mutate)):
         lock_user(s, uid)
         j = owned(s, Job, job_id, uid)
         raw = project_data(j)
+        blocked = verification_block_reasons(raw)
+        if blocked:
+            raise HTTPException(403, 'Project is blocked: ' + '; '.join(blocked))
         c = s.query(Connection).filter_by(user_id=uid).first()
         if raw.get('demo') or not c:
             raise HTTPException(403, 'Demo jobs cannot submit bids. Connect your own account.')
@@ -1798,13 +1830,18 @@ def get_live_bids(uid: int = Depends(current)):
 @app.get('/api/stats')
 def stats(uid: int = Depends(current)):
     with SessionLocal() as s:
-        total = s.query(Job).filter_by(user_id=uid).count()
-        strong = s.query(Job).filter_by(user_id=uid).filter(Job.score >= 68).count()
+        total = strong = blocked = 0
+        for job in s.query(Job).filter_by(user_id=uid).yield_per(200):
+            if verification_block_reasons(project_data(job, display=True)):
+                blocked += 1
+            else:
+                total += 1
+                strong += int(job.score >= 68)
         drafts = s.query(Bid).filter_by(user_id=uid, status='draft').count()
         submitted = s.query(Bid).filter_by(user_id=uid, status='submitted').count()
         auto_sent = s.query(Bid).filter_by(user_id=uid, status='submitted', source='auto').count()
         chat_greeted = s.query(ChatGreeted).filter_by(user_id=uid, status='submitted').count()
-        return {'jobs': total, 'strong': strong, 'drafts': drafts, 'submitted': submitted, 'auto_sent': auto_sent, 'chat_greeted': chat_greeted}
+        return {'jobs': total, 'blocked': blocked, 'total_jobs': total + blocked, 'strong': strong, 'drafts': drafts, 'submitted': submitted, 'auto_sent': auto_sent, 'chat_greeted': chat_greeted}
 
 
 from .preferences_api import install_preferences_routes

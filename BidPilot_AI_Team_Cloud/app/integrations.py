@@ -1,5 +1,5 @@
 """Dual-AI Engine: Google Gemini (2.5 Flash / Pro) + OpenAI ChatGPT (GPT-4.1 / GPT-4o) + Smart Bidman Fallback."""
-import os, json, re, ipaddress, hashlib, threading, time
+import os, json, re, ipaddress, hashlib, threading, time, math
 from urllib.parse import urlsplit
 import httpx
 from .freelancer import FreelancerAPI, FreelancerError, unwrap_user, normalize_project
@@ -27,7 +27,7 @@ _AI_CIRCUIT_LOCK = threading.Lock()
 
 def _provider_fingerprint(provider, key, model):
     configuration = (
-        (os.getenv('OPENAI_BASE_URL', ''), os.getenv('OPENAI_TOKEN_PARAMETER', ''))
+        (os.getenv('OPENAI_BASE_URL', ''), os.getenv('OPENAI_TOKEN_PARAMETER', ''), os.getenv('OPENAI_API_MODE', 'auto'))
         if provider == 'openai' else (os.getenv('GEMINI_AUTH_MODE', 'api_key'),)
     )
     return hashlib.sha256(json.dumps((provider, key, model, configuration)).encode()).digest()
@@ -68,6 +68,7 @@ def _release_provider(fingerprint, error=None):
             _AI_CIRCUITS[fingerprint] = {
                 'in_flight': False,
                 'until': time.monotonic() + getattr(error, 'retry_after', 60),
+                'failure_kind': _safe_failure_kind(error),
             }
 
 
@@ -222,7 +223,16 @@ _FAILURE_HINTS = {
     'generation_access_unconfirmed': 'The requested generation resource was not found. Check the credential, project, API endpoint and generation permissions; the cause is not yet confirmed.',
     'invalid_request': 'Request rejected; verify provider configuration, credential type and supported request parameters.',
     'provider_unavailable': 'Provider temporarily unavailable; check provider status and server configuration.',
+    'invalid_response': 'The provider returned an invalid or empty draft. Check the selected model in Settings and test the connection.',
+    'incomplete_response': 'The provider did not finish the draft. Check model output limits and safety filters before trying again.',
+    'timeout': 'The provider request timed out. Wait before trying again; the provider may still have processed the request.',
+    'connection_error': 'The provider could not be reached. Check server outbound network access and provider status.',
 }
+
+
+def _safe_failure_kind(error):
+    kind = getattr(error, 'failure_kind', None)
+    return kind if isinstance(kind, str) and kind in _FAILURE_HINTS else 'provider_unavailable'
 
 
 def _read_error_json(response):
@@ -313,11 +323,11 @@ def _request_json(method, url, headers, payload, provider, *, params=None, timeo
             raise AIProviderError(f'{provider} rejected the request; check credential permissions, model and billing')
         return data
     except httpx.TimeoutException:
-        raise AIProviderError(f'{provider} request timed out; try later') from None
+        raise AIProviderError(f'{provider} request timed out; try later', failure_kind='timeout') from None
     except (httpx.RequestError, httpx.InvalidURL):
-        raise AIProviderError(f'Cannot reach {provider}; check server outbound network access') from None
+        raise AIProviderError(f'Cannot reach {provider}; check server outbound network access', failure_kind='connection_error') from None
     except (ValueError, UnicodeError, RecursionError):
-        raise AIProviderError(f'{provider} returned invalid JSON') from None
+        raise AIProviderError(f'{provider} returned invalid JSON', failure_kind='invalid_response') from None
 
 
 def _post_json(url, headers, payload, provider):
@@ -403,7 +413,7 @@ def _validated_provider_text(answer, provider):
         if '\x00' in answer:
             raise ValueError
     except (UnicodeError, ValueError):
-        raise AIProviderError(f'{provider} returned invalid text encoding') from None
+        raise AIProviderError(f'{provider} returned invalid text encoding', failure_kind='invalid_response') from None
     return answer
 
 
@@ -428,7 +438,7 @@ def _call_gemini(api_key, model, prompt, max_tokens=380, *, system_prompt=AI_SAF
     candidates = data.get('candidates') or []
     if isinstance(candidates, list) and candidates and isinstance(candidates[0], dict):
         if candidates[0].get('finishReason') not in (None, 'STOP'):
-            raise AIProviderError('Gemini did not complete the draft. Increase the output budget or review provider safety filters')
+            raise AIProviderError('Gemini did not complete the draft. Increase the output budget or review provider safety filters', failure_kind='incomplete_response')
         content = candidates[0].get('content')
         parts = content.get('parts') or [] if isinstance(content, dict) else []
         if not isinstance(parts, list):
@@ -436,7 +446,7 @@ def _call_gemini(api_key, model, prompt, max_tokens=380, *, system_prompt=AI_SAF
         answer = '\n'.join(p['text'] for p in parts if isinstance(p, dict) and isinstance(p.get('text'), str) and not p.get('thought')).strip()
         if answer:
             return _validated_provider_text(answer, 'Gemini')
-    raise AIProviderError('Gemini returned no text. Check safety filters, selected model and output budget')
+    raise AIProviderError('Gemini returned no text. Check safety filters, selected model and output budget', failure_kind='invalid_response')
 
 
 def _openai_base_url():
@@ -459,11 +469,70 @@ def _openai_base_url():
     return value
 
 
+def _openai_uses_responses(model, base_url):
+    """Route known Responses-only families without probing/repeating generation.
+
+    A server operator can select a future provider protocol explicitly. The
+    automatic routing applies only to the official OpenAI host; compatible
+    third-party endpoints keep their established Chat Completions behavior.
+    """
+    mode = os.getenv('OPENAI_API_MODE', 'auto').strip().lower()
+    if mode not in ('auto', 'chat_completions', 'responses'):
+        raise AIProviderError('OPENAI_API_MODE must be auto, chat_completions or responses')
+    if mode != 'auto':
+        return mode == 'responses'
+    return urlsplit(base_url).hostname == 'api.openai.com' and bool(re.match(
+        r'(?:gpt-[0-9]+(?:\.[0-9]+)*-(?:codex|pro)(?:-|$)|codex(?:-|$)|'
+        r'o[0-9]+(?:-mini)?-(?:pro|deep-research)(?:-|$))', model,
+    ))
+
+
+def _openai_response_text(data):
+    """Read completed assistant text only, never reasoning or tool-call payloads."""
+    if data.get('status') != 'completed':
+        raise AIProviderError('OpenAI did not complete the draft. Check model output limits and safety filters',
+                              failure_kind='incomplete_response')
+    output = data.get('output')
+    if not isinstance(output, list) or len(output) > 128:
+        raise AIProviderError('OpenAI returned invalid output', failure_kind='invalid_response')
+    text_parts = []
+    for item in output:
+        if not isinstance(item, dict):
+            raise AIProviderError('OpenAI returned invalid output', failure_kind='invalid_response')
+        if item.get('type') == 'reasoning':
+            continue
+        if item.get('type') != 'message' or item.get('role') != 'assistant':
+            raise AIProviderError('OpenAI returned unsupported output', failure_kind='invalid_response')
+        if item.get('status') != 'completed':
+            raise AIProviderError('OpenAI did not complete the draft', failure_kind='incomplete_response')
+        content = item.get('content')
+        if not isinstance(content, list) or len(content) > 128:
+            raise AIProviderError('OpenAI returned invalid output', failure_kind='invalid_response')
+        for part in content:
+            if not isinstance(part, dict) or part.get('type') != 'output_text' or not isinstance(part.get('text'), str):
+                # Refusals and non-text outputs are not usable proposal drafts.
+                raise AIProviderError('OpenAI returned no usable text; check model and safety filters',
+                                      failure_kind='invalid_response')
+            text_parts.append(part['text'])
+    answer = '\n'.join(text_parts).strip()
+    if not answer:
+        raise AIProviderError('OpenAI returned no text. Check model support and output budget', failure_kind='invalid_response')
+    return _validated_provider_text(answer, 'OpenAI')
+
+
 def _call_openai(api_key, model, prompt, max_tokens=380, *, system_prompt=AI_SAFETY_RULES):
     key = _credential(api_key)
     if not isinstance(model, str) or not 1 <= len(model) <= 120 or any(c.isspace() for c in model):
         raise AIProviderError('Invalid OpenAI model name')
     base_url = _openai_base_url()
+    if _openai_uses_responses(model, base_url):
+        payload = {
+            'model': model, 'instructions': system_prompt, 'input': prompt,
+            'max_output_tokens': max(64, min(int(max_tokens), 4096)), 'store': False,
+        }
+        data = _post_json(base_url + '/responses',
+                          {'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'}, payload, 'OpenAI')
+        return _openai_response_text(data)
     default_parameter = 'max_completion_tokens' if urlsplit(base_url).hostname == 'api.openai.com' else 'max_tokens'
     token_parameter = os.getenv('OPENAI_TOKEN_PARAMETER', default_parameter).strip()
     if token_parameter not in ('max_completion_tokens', 'max_tokens'):
@@ -481,37 +550,94 @@ def _call_openai(api_key, model, prompt, max_tokens=380, *, system_prompt=AI_SAF
     choices = data.get('choices') or []
     if isinstance(choices, list) and choices and isinstance(choices[0], dict):
         if choices[0].get('finish_reason') not in (None, 'stop'):
-            raise AIProviderError('OpenAI did not complete the draft. Increase the output budget or review provider safety filters')
+            raise AIProviderError('OpenAI did not complete the draft. Increase the output budget or review provider safety filters', failure_kind='incomplete_response')
         message = choices[0].get('message')
         answer = message.get('content') if isinstance(message, dict) else None
         if isinstance(answer, str) and answer.strip():
             return _validated_provider_text(answer.strip(), 'OpenAI')
-    raise AIProviderError('OpenAI returned no text. Check model support and output budget')
+    raise AIProviderError('OpenAI returned no text. Check model support and output budget', failure_kind='invalid_response')
 
 
-def _call_llm(prompt, u=None, max_tokens=380):
-    """Explicit preferences use only that provider; auto permits cross-provider failover."""
+def _provider_wait_status(provider, key, model):
+    """Describe a skipped reservation without exposing keys or cached fingerprints."""
+    fingerprint = _provider_fingerprint(provider, key, model)
+    with _AI_CIRCUIT_LOCK:
+        state = _AI_CIRCUITS.get(fingerprint)
+        if state and not state['in_flight'] and state['until'] > time.monotonic():
+            kind = state.get('failure_kind')
+            kind = kind if kind in _FAILURE_HINTS else 'provider_unavailable'
+            return {
+                'status': 'provider_cooldown', 'failure_kind': kind,
+                'retry_after': max(1, math.ceil(state['until'] - time.monotonic())),
+                'message': 'The provider is temporarily paused after a failed request. ' + _FAILURE_HINTS[kind],
+            }
+    # A reservation can also fail when the bounded cache is full. In either
+    # case another attempt must wait; never report this as bad credentials.
+    return {
+        'status': 'provider_busy', 'failure_kind': None, 'retry_after': None,
+        'message': 'AI generation is busy. Wait for the current request to finish, then try again.',
+    }
+
+
+def _call_llm_result(prompt, u=None, max_tokens=380, *, minimum_length=1):
+    """One attempt per eligible provider, with safe observable failure states.
+
+    Explicit preferences use only that provider; auto permits cross-provider
+    failover. A failed request is never repeated against the same provider.
+    """
     creds = resolve_ai_credentials(u)
     pref = creds['preferred_ai']
+    empty = {'text': None, 'provider': None, 'model': None, 'retry_after': None, 'attempts': []}
     if pref == 'smart_builtin':
-        return None
+        return {**empty, 'status': 'builtin_selected',
+                'message': 'Built-in template is selected in AI Settings; no AI provider was called.'}
     order = ['gemini', 'openai'] if pref == 'auto' else ([pref] if pref in ('gemini', 'openai') else [])
+    attempts = []
     for provider in order:
         key = creds[provider + '_key']
         if not key:
             continue
-        fingerprint = _reserve_provider(provider, key, creds[provider + '_model'])
+        model = creds[provider + '_model']
+        fingerprint = _reserve_provider(provider, key, model)
         if fingerprint is None:
+            attempts.append({'provider': provider, 'model': model, **_provider_wait_status(provider, key, model)})
             continue
         failure = None
         try:
             caller = _call_gemini if provider == 'gemini' else _call_openai
-            return caller(key, creds[provider + '_model'], prompt, max_tokens)
+            answer = caller(key, model, prompt, max_tokens)
+            if not isinstance(answer, str) or len(answer.strip()) < minimum_length:
+                raise AIProviderError('Provider returned an empty or incomplete draft', failure_kind='invalid_response')
+            answer = _validated_provider_text(answer.strip(), provider)
+            attempts.append({'provider': provider, 'model': model, 'status': 'generated',
+                             'failure_kind': None, 'retry_after': None})
+            return {'text': answer, 'provider': provider, 'model': model, 'status': 'generated',
+                    'retry_after': None, 'attempts': attempts, 'message': 'AI draft generated. Review it before sending.'}
         except AIProviderError as exc:
             failure = exc
+        except Exception:
+            # Transport adapters may raise errors containing private request
+            # data. Keep both the response and circuit metadata free of it.
+            failure = AIProviderError('Provider generation unavailable', failure_kind='provider_unavailable')
         finally:
             _release_provider(fingerprint, failure)
-    return None
+        kind = _safe_failure_kind(failure)
+        attempts.append({'provider': provider, 'model': model, 'status': 'provider_error',
+                         'failure_kind': kind, 'retry_after': failure.retry_after,
+                         'message': _FAILURE_HINTS[kind]})
+    if not attempts:
+        return {**empty, 'status': 'missing_credentials',
+                'message': 'No API key is configured for the selected AI provider. Save and test a key in AI Settings.'}
+    # Prefer an actual error over a busy/cooldown skip when auto tried both.
+    issue = next((item for item in attempts if item['status'] == 'provider_error'), attempts[0])
+    retry_times = [item['retry_after'] for item in attempts if item['retry_after'] is not None]
+    return {**empty, 'attempts': attempts, 'status': issue['status'], 'message': issue['message'],
+            'retry_after': min(retry_times) if retry_times else None}
+
+
+def _call_llm(prompt, u=None, max_tokens=380):
+    """Legacy text-or-None API for workers, reviews and replies."""
+    return _call_llm_result(prompt, u=u, max_tokens=max_tokens)['text']
 
 
 def test_ai_connection(u, provider='both'):
@@ -587,11 +713,7 @@ def test_ai_connection(u, provider='both'):
     return results
 
 
-def ai_proposal(job, u):
-    """Generates a winning Bidman-style AI proposal using Gemini, ChatGPT, or the built-in Deep Smart AI Engine."""
-    configured = render_proposal_template(job, u)
-    if configured is not None:
-        return configured
+def _proposal_prompt(job, u):
     profile = {
         'name': str(u.name or '')[:100], 'bio': str(u.description or '')[:450],
         'skills': str(u.skills or '')[:1000], 'portfolio': str(u.portfolio or '')[:500],
@@ -603,7 +725,7 @@ def ai_proposal(job, u):
         'title': str(job.get('title') or '')[:250],
         'description': str(job.get('description') or '')[:3000],
     }
-    prompt = (
+    return (
         'Write a clear, human-sounding proposal of 110 to 160 words for the quoted client project. '
         'Describe a practical approach, include the supplied portfolio if relevant, and end with one scope question. '
         'Use only supplied profile facts; do not guarantee an outcome or accept payment or contract terms. '
@@ -611,7 +733,30 @@ def ai_proposal(job, u):
         + json.dumps({'freelancer_profile': profile, 'client_project': client_data}, ensure_ascii=False)
     )
 
-    llm_answer = _call_llm(prompt, u=u, max_tokens=400)
+
+def ai_proposal_result(job, u):
+    """An explicit AI click tries the selected provider even with a saved template.
+
+    Automatic workers retain their template-first behavior in ai_proposal.
+    A saved template is an identified fallback when interactive AI is unavailable.
+    """
+    configured = render_proposal_template(job, u)
+    result = _call_llm_result(_proposal_prompt(job, u), u=u, max_tokens=400, minimum_length=30)
+    answer = result.pop('text')
+    if answer:
+        return {'proposal': answer[:2800], 'source': 'ai', 'ai_used': True, **result}
+    saved = configured is not None
+    return {'proposal': configured if saved else make_proposal(job, u),
+            'source': 'saved_template' if saved else 'local_template', 'ai_used': False,
+            **result, 'message': ('Saved template shown. ' if saved else 'Local template shown. ') + result['message']}
+
+
+def ai_proposal(job, u):
+    """Legacy string API for automation and existing integrations."""
+    configured = render_proposal_template(job, u)
+    if configured is not None:
+        return configured
+    llm_answer = _call_llm(_proposal_prompt(job, u), u=u, max_tokens=400)
     if llm_answer:
         return llm_answer[:2800]
 

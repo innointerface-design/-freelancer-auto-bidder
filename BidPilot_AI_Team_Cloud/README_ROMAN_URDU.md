@@ -1,5 +1,7 @@
 # BidPilot AI — Ubuntu setup aur zaroori baatein
 
+**Latest v4.6:** [models, Blocked page, AI proposal status aur simple payment design](V4_6_MODELS_BLOCKED_UI_ROMAN_URDU.md). Payment unknown/unverified projects par manual aur automatic bid dono band hain. Saved model selection khud nahi badalti.
+
 **Latest v4.5.1:** naye uploaded ZIP ke tamam 152 files compare karke remaining backend/frontend aur purane CLI ke fixes [V4_5_1_REVIEW_ROMAN_URDU.md](V4_5_1_REVIEW_ROMAN_URDU.md) mein record hain. Existing account/database preserve karke [safe update steps](V4_5_FULL_REVIEW_ROMAN_URDU.md#existing-installation-safely-update-karein) follow karein.
 
 **Latest v4.4:** successful login ko failure count karne wala bug aur redundant registration login fix hain. Pro upgrade ke baad sign-in aur account lock recovery [V4_4_LOGIN_FIX_ROMAN_URDU.md](V4_4_LOGIN_FIX_ROMAN_URDU.md) mein dekhein; password/plan preserve rehte hain.

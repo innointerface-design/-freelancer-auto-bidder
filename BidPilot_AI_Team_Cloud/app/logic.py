@@ -3,6 +3,7 @@ import re, time, math
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 from .scoring_base import RISK_TERMS, parse_number as _parse_number, contains_term, normalized_text, skill_text, country_code, country_codes
 from .advanced import AdvancedConfigError, load_advanced, evaluate_filters, schedule_allows, render_proposal_template
+from .verification import classify_verification, verification_block_reasons
 
 ALIASES = {
     'video editing': ['video editor', 'video editing', 'edit video', 'video production', 'premiere pro', 'davinci resolve', 'capcut', 'final cut'],
@@ -53,7 +54,8 @@ def score_job(job, skills, countries, excluded_keywords='', search_fields=None):
     all_risks = sorted(set(list(RISK_TERMS) + custom_excluded))
     risks = [x for x in all_risks if contains_term(risk_text, x)]
 
-    pay = job.get('payment_verified')
+    verification = classify_verification(job)
+    pay = verification['checks']['payment_verified']
     review = parse_number(job.get('client_reviews'))
     review = max(0, review) if review is not None else None
     rating = parse_number(job.get('client_rating'))
@@ -92,16 +94,18 @@ def score_job(job, skills, countries, excluded_keywords='', search_fields=None):
     fresh = 5 if age is not None and age < 7200 else (3 if age is not None and age < 86400 else 1)
 
     score = max(0, min(100, skill_pts + trust + budget + detail + fresh - (40 if risks else 0)))
-    verdict = 'Skip' if risks or not matched or score < 42 else ('Strong match' if score >= 68 else 'Review')
+    verification_blocks = verification['reasons']
+    verdict = 'Skip' if verification_blocks or risks or not matched or score < 42 else ('Strong match' if score >= 68 else 'Review')
 
     reasons = [
         f'Skills matched: {", ".join(matched)}' if matched else 'No direct profile-skill match',
-        'Payment verified' if pay is True else ('Payment not verified' if pay is False else 'Payment status unverified/new client'),
+        'Payment verified' if pay is True else ('Client payment is unverified' if pay is False else 'Client payment verification is unknown'),
         f'Employer country: {job.get("country") or country}' if country else 'Employer country global/unspecified',
         f'Client reviews: {int(review)}' if review is not None else 'Employer review count: New/0'
     ]
     if risks:
         reasons.append('Blocked/Red flag terms: ' + ', '.join(risks))
+    reasons.extend(reason for reason in verification_blocks if reason not in reasons)
 
     return {
         'score': score,
@@ -251,8 +255,7 @@ def auto_eligible(job, score, user, conn, platform_gate=True, existing=None, day
         causes.append('Hourly projects excluded by your filter')
     if not getattr(user, 'allow_any_currency', True) and currency != 'USD':
         causes.append('Non-USD currency excluded by your filter')
-    if getattr(user, 'require_payment_verified', False) and job.get('payment_verified') is not True:
-        causes.append('Client payment not verified')
+    causes.extend(verification_block_reasons(job))
 
     allowed_countries = country_codes(user.countries)
     job_country = country_code(job.get('country_code'))

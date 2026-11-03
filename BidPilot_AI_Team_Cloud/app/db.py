@@ -174,9 +174,9 @@ class User(Base):
     # Encrypted Dual AI Keys (Google Gemini + OpenAI ChatGPT) & Preferred Provider
     preferred_ai = Column(String(30), default='auto')  # auto (Gemini -> ChatGPT -> Smart AI), gemini, openai, smart_builtin
     gemini_key_cipher = Column(Text, default='')
-    gemini_model = Column(String(60), default='gemini-3.5-flash-lite')
+    gemini_model = Column(String(120), default='gemini-3.5-flash-lite')
     openai_key_cipher = Column(Text, default='')
-    openai_model = Column(String(60), default='gpt-4.1-mini')
+    openai_model = Column(String(120), default='gpt-4.1-mini')
 
     # Bidman.co Style Profile & Auto-Bidding Filters
     skills = Column(Text, default='video editing, motion graphics, AI video, short-form editing, video ads, UI/UX design')
@@ -381,9 +381,9 @@ def audit(s, user_id, action, message=''):
 
 
 def _auto_migrate_sqlite():
-    """Add missing columns for the supplied SQLite or PostgreSQL schema, atomically.
+    """Add missing columns and widen model IDs in SQLite/PostgreSQL, atomically.
 
-    This is a limited additive migration. It deliberately fails on errors rather
+    This is a limited additive/widening migration. It deliberately fails on errors rather
     than starting against a half-migrated database. Back up before upgrades.
     """
     insp = inspect(engine)
@@ -400,9 +400,9 @@ def _auto_migrate_sqlite():
             ('lock_version', 'INTEGER DEFAULT 0'),
             ('preferred_ai', "VARCHAR(30) DEFAULT 'auto'"),
             ('gemini_key_cipher', "TEXT DEFAULT ''"),
-            ('gemini_model', "VARCHAR(60) DEFAULT 'gemini-3.5-flash-lite'"),
+            ('gemini_model', "VARCHAR(120) DEFAULT 'gemini-3.5-flash-lite'"),
             ('openai_key_cipher', "TEXT DEFAULT ''"),
-            ('openai_model', "VARCHAR(60) DEFAULT 'gpt-4.1-mini'"),
+            ('openai_model', "VARCHAR(120) DEFAULT 'gpt-4.1-mini'"),
             ('excluded_keywords', "TEXT DEFAULT 'telegram, upfront fee, registration fee, adult, gambling'"),
             ('proposal_tone', "VARCHAR(40) DEFAULT 'winning_direct'"),
             ('advanced_config', "TEXT DEFAULT '{}'"),
@@ -437,10 +437,18 @@ def _auto_migrate_sqlite():
         for table_name, columns in migration_cols.items():
             if table_name not in existing_tables:
                 continue
-            existing = {c['name'] for c in insp.get_columns(table_name)}
+            existing = {c['name']: c for c in insp.get_columns(table_name)}
             for column_name, definition in columns:
                 if column_name not in existing:
                     conn.execute(text(f'ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}'))
+                elif engine.dialect.name == 'postgresql' and table_name == 'users' and column_name in ('gemini_model', 'openai_model'):
+                    # PostgreSQL enforces VARCHAR limits; SQLite accepts long IDs
+                    # already and needs no risky table rebuild. Inspect each boot
+                    # so existing 120+, unbounded VARCHAR or TEXT are never altered.
+                    column_type = existing[column_name]['type']
+                    length = getattr(column_type, 'length', None)
+                    if isinstance(column_type, String) and isinstance(length, int) and 0 < length < 120:
+                        conn.execute(text(f'ALTER TABLE users ALTER COLUMN {column_name} TYPE VARCHAR(120)'))
         # Normalize legacy prices without giving unpaid legacy accounts access.
         conn.execute(text("UPDATE users SET monthly_fee=40.0 WHERE plan_tier='paid_pro'"))
         conn.execute(text("UPDATE users SET monthly_fee=10.0, monthly_bid_limit=150 WHERE plan_tier='paid_starter'"))

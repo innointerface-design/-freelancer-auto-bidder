@@ -43,7 +43,7 @@ def safety_database(tmp_path, monkeypatch):
 def add_job(sessions, uid, remote, *, discovered=None, score=80):
     with sessions() as s:
         raw = {'id': str(remote), 'title': 'Python automation service', 'description': 'Implement a Python backend with tests and documentation.',
-               'skills': ['Python'], 'budget_min': 20, 'budget_max': 100, 'currency': 'USD', 'owner_id': '456',
+               'skills': ['Python'], 'payment_verified': True, 'budget_min': 20, 'budget_max': 100, 'currency': 'USD', 'owner_id': '456',
                'project_status': 'active', 'type': 'fixed', 'environment': 'sandbox', 'account_id': '123'}
         job = db.Job(user_id=uid, remote_id=str(remote), data=json.dumps(raw), score=score, decision='Strong match')
         if discovered is not None:

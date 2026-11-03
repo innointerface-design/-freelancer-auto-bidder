@@ -129,7 +129,7 @@ def test_sending_bid_remains_paused_after_minimum_gap_without_mutation(state):
 def test_queue_skips_invalid_saved_project_data(state, payload):
     sessions, uid, now = state
     with sessions() as session:
-        base = {'environment': 'sandbox', 'account_id': '123', 'project_status': 'active'}
+        base = {'payment_verified': True, 'environment': 'sandbox', 'account_id': '123', 'project_status': 'active'}
         # Add valid metadata without parsing the deliberately invalid value.
         corrupted = json.dumps(base)[:-1] + ',' + payload[1:]
         session.add(db.Job(user_id=uid, remote_id='broken', data=corrupted, score=99))
@@ -147,7 +147,7 @@ def test_corrupt_project_does_not_starve_other_client_greetings(state, monkeypat
     with sessions() as session:
         session.get(db.User, uid).auto_chat_greeting = True
         for remote, data in [('901', broken), ('902', json.dumps({
-            'environment': 'sandbox', 'account_id': '123', 'title': 'Valid project',
+            'environment': 'sandbox', 'account_id': '123', 'title': 'Valid project', 'payment_verified': True,
         }))]:
             job = db.Job(user_id=uid, remote_id=remote, data=data)
             session.add(job)

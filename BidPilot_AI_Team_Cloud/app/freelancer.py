@@ -6,6 +6,7 @@ import time
 from email.utils import parsedate_to_datetime
 from urllib.parse import quote
 import httpx
+from .verification import normalize_client_verifications
 
 
 class FreelancerError(Exception):
@@ -213,12 +214,8 @@ def normalize_project(raw, user=None, sandbox=False):
     cc = user.get('country') or loc.get('country') or {}
     if not isinstance(cc, dict):
         cc = {}
-    status = user.get('status') if isinstance(user.get('status'), dict) else {}
-    pv = status.get('payment_verified')
-    if not isinstance(pv, bool):
-        pv = user.get('payment_verified')
-    if not isinstance(pv, bool):
-        pv = None
+    verifications = normalize_client_verifications(user)
+    pv = verifications.get('payment_verified')
     rep = user.get('employer_reputation') or {}
     if not isinstance(rep, dict):
         rep = {}
@@ -264,6 +261,7 @@ def normalize_project(raw, user=None, sandbox=False):
         country=cc.get('name') or '',
         country_code=cc.get('code') or '',
         payment_verified=pv,
+        client_verifications=verifications,
         client_reviews=reviews,
         client_rating=rating,
         client_name=user.get('display_name') or user.get('username') or 'Employer',

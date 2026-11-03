@@ -1,5 +1,7 @@
 # BidPilot AI — reviewed project
 
+**v4.6:** [dynamic model catalogs, clear proposal AI status, Blocked projects and interface polish](V4_6_MODELS_BLOCKED_UI_ROMAN_URDU.md). Payment verification is required for every bid; unverified, missing or unknown client payment routes projects to Blocked. Settings discovers text model candidates using saved provider credentials without changing your selection.
+
 **v4.5.1 follow-up review:** [uploaded-source fixes and verification](V4_5_1_REVIEW_ROMAN_URDU.md). This patch repairs malformed input/provider errors, Unicode settings backup restore, hidden-character filtering, automation status and overlapping administrator actions, with additional fixes for the older CLI/web application.
 
 **v4.5 full review:** [confirmed fixes, polished layouts, verification and safe update steps](V4_5_FULL_REVIEW_ROMAN_URDU.md). Disabled-account renewals preserve prepaid time, SQLite startup resolves consistently, damaged stored projects fail safely, expired automation remains off, pasted JSON secrets are redacted, and frontend drafts/account guards remain intact. Responsive spacing, alignment and admin hierarchy are refined. The legacy CLI/web code was also reviewed and fixed in the full repository.
